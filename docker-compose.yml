@@ -5,11 +5,15 @@ services:
     env_file:
       - ./backend/.env.example
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: mistral:latest
     ports:
       - "8000:8000"
-    depends_on:
-      - ollama
+    volumes:
+      - backend-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
 
   frontend:
     build:
@@ -17,18 +21,12 @@ services:
     env_file:
       - ./frontend/.env.example
     environment:
-      VITE_API_BASE_URL: http://localhost:8000
+      VITE_PROXY_TARGET: http://backend:8000
     ports:
       - "5173:5173"
     depends_on:
       - backend
-
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
+    restart: unless-stopped
 
 volumes:
-  ollama-data:
+  backend-data:

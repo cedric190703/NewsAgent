@@ -8,12 +8,20 @@ class OllamaProvider:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def generate(self, messages: list[ChatMessage]) -> str:
-        payload = {
+    async def generate(
+        self,
+        messages: list[ChatMessage],
+        *,
+        json_mode: bool = False,
+    ) -> str:
+        payload: dict = {
             "model": self._settings.ollama_model,
             "messages": [message.__dict__ for message in messages],
             "stream": False,
+            "options": {"temperature": 0.2},
         }
+        if json_mode:
+            payload["format"] = "json"
 
         async with httpx.AsyncClient(timeout=self._settings.llm_timeout_seconds) as client:
             response = await client.post(

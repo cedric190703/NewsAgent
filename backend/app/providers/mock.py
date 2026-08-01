@@ -2,7 +2,12 @@ from app.providers.base import ChatMessage
 
 
 class MockProvider:
-    async def generate(self, messages: list[ChatMessage]) -> str:
+    async def generate(
+        self,
+        messages: list[ChatMessage],
+        *,
+        json_mode: bool = False,
+    ) -> str:
         topic = "the requested topic"
         for message in reversed(messages):
             if "Topic:" in message.content:

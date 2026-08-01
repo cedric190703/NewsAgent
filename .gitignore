@@ -20,3 +20,6 @@ frontend/.env
 .DS_Store
 .idea/
 .vscode/
+
+# Runtime data
+backend/data/
