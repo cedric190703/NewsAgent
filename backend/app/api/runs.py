@@ -49,6 +49,52 @@ async def create_run(request: RunRequest, x_admin_key: str | None = Header(defau
     return {"run_id": run_id, "status": "created"}
 
 
+@router.post("/runs/batch")
+async def create_batch_runs(
+    body: dict[str, Any],
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Create one run per group, using each group's theme.
+
+    Accepts optional overrides for audience, tone, length, good_news_mode,
+    subtopic_count, max_sources, enable_factcheck.
+    Groups without a theme are skipped.
+    """
+    _check_admin(x_admin_key)
+    groups = await store.list_groups()
+    overrides = body or {}
+
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+
+    for g in groups:
+        theme = (g.get("theme") or "").strip()
+        if not theme:
+            skipped.append({"group_id": g["group_id"], "name": g["name"], "reason": "No theme set"})
+            continue
+
+        run_id = new_run_id()
+        config = RunConfig(
+            theme=theme,
+            audience=overrides.get("audience", ""),
+            tone=overrides.get("tone", "neutral"),
+            length=overrides.get("length", "standard"),
+            good_news_mode=overrides.get("good_news_mode", "balanced"),
+            subtopic_count=overrides.get("subtopic_count", 4),
+            max_sources=overrides.get("max_sources", 20),
+            enable_factcheck=overrides.get("enable_factcheck", True),
+        )
+        await store.save_run(run_id, config)
+        created.append({
+            "run_id": run_id,
+            "group_id": g["group_id"],
+            "group_name": g["name"],
+            "theme": theme,
+        })
+
+    return {"created": created, "skipped": skipped}
+
+
 @router.get("/runs/{run_id}/stream")
 async def stream_run_events(run_id: str) -> EventSourceResponse:
     """SSE endpoint: streams node events and final newsletter as they happen."""
@@ -317,11 +363,12 @@ async def send_newsletter(
 async def create_group(
     name: str,
     description: str = "",
+    theme: str = "",
     x_admin_key: str | None = Header(default=None),
 ) -> dict[str, str]:
     _check_admin(x_admin_key)
     group_id = uuid4().hex[:12]
-    await store.create_group(group_id, name, description)
+    await store.create_group(group_id, name, description, theme)
     return {"group_id": group_id, "status": "created"}
 
 

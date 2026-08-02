@@ -265,6 +265,7 @@ export interface Group {
   group_id: string;
   name: string;
   description: string;
+  theme: string;
   created_at: string;
   subscriber_count: number;
 }
@@ -308,12 +309,31 @@ export async function listGroups(): Promise<Group[]> {
   return getJSON("/api/groups");
 }
 
-export async function createGroup(name: string, description: string, adminKey: string): Promise<{ group_id: string }> {
+export async function createGroup(name: string, description: string, adminKey: string, theme?: string): Promise<{ group_id: string }> {
   const params = new URLSearchParams({ name });
   if (description) params.set("description", description);
+  if (theme) params.set("theme", theme);
   const res = await fetch(`${API_BASE}/api/groups?${params}`, {
     method: "POST",
     headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface BatchRunResult {
+  created: { run_id: string; group_id: string; group_name: string; theme: string }[];
+  skipped: { group_id: string; name: string; reason: string }[];
+}
+
+export async function batchCreateRuns(
+  overrides: { audience?: string; tone?: string; length?: string; good_news_mode?: string; subtopic_count?: number; max_sources?: number; enable_factcheck?: boolean },
+  adminKey: string,
+): Promise<BatchRunResult> {
+  const res = await fetch(`${API_BASE}/api/runs/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify(overrides),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();

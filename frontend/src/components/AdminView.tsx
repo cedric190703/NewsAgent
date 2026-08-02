@@ -23,6 +23,7 @@ import {
   Send,
   RefreshCw,
   HelpCircle,
+  Layers,
 } from "lucide-react";
 
 import {
@@ -59,6 +60,8 @@ import {
   listQuestions,
   createQuestion,
   deleteQuestion,
+  batchCreateRuns,
+  type BatchRunResult,
   type RunHistoryItem,
   type Subscriber,
   type Group,
@@ -125,6 +128,9 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   const [newSubName, setNewSubName] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupDesc, setNewGroupDesc] = useState("");
+  const [newGroupTheme, setNewGroupTheme] = useState("");
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string>("");
@@ -268,9 +274,10 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   const handleCreateGroup = async () => {
     if (!newGroupName.trim() || !adminKey.trim()) return;
     try {
-      await createGroup(newGroupName.trim(), newGroupDesc.trim(), adminKey);
+      await createGroup(newGroupName.trim(), newGroupDesc.trim(), adminKey, newGroupTheme.trim() || undefined);
       setNewGroupName("");
       setNewGroupDesc("");
+      setNewGroupTheme("");
       refreshGroups();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create group");
@@ -279,6 +286,41 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
 
   const handleDeleteGroup = async (id: string) => {
     try { await deleteGroup(id, adminKey); refreshGroups(); refreshSubscribers(); } catch { /* ignore */ }
+  };
+
+  const handleBatchGenerate = async () => {
+    if (!adminKey.trim() || groups.length === 0) return;
+    setBatchLoading(true);
+    setBatchStatus(null);
+    try {
+      const result = await batchCreateRuns(
+        {
+          audience: audience.trim() || undefined,
+          tone,
+          length,
+          good_news_mode: mode,
+          subtopic_count: subtopicCount,
+          max_sources: maxSources,
+          enable_factcheck: factcheck,
+        },
+        adminKey,
+      );
+      const createdCount = result.created.length;
+      const skippedCount = result.skipped.length;
+      if (createdCount > 0) {
+        setBatchStatus(`Created ${createdCount} run(s) for groups: ${result.created.map(r => r.group_name).join(", ")}`);
+        refreshHistory();
+      } else {
+        setBatchStatus("No runs created — all groups lack a theme.");
+      }
+      if (skippedCount > 0) {
+        setBatchStatus(prev => prev ? `${prev} (Skipped: ${result.skipped.map(s => s.name).join(", ")})` : `Skipped: ${result.skipped.map(s => s.name).join(", ")}`);
+      }
+    } catch (err) {
+      setBatchStatus(err instanceof Error ? err.message : "Batch generation failed");
+    } finally {
+      setBatchLoading(false);
+    }
   };
 
   const handleToggleSubscriberGroup = async (subscriberId: string, groupId: string) => {
@@ -702,18 +744,27 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                       <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Groups</div>
                       <div className="flex gap-2">
                         <input className="input-field flex-1" type="text" value={newGroupName}
-                          onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name (e.g. Group A)" />
+                          onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name (e.g. AI in Healthcare)" />
                         <button onClick={handleCreateGroup} className="rounded-lg bg-brand-600 p-2.5 text-white transition hover:bg-brand-700">
                           <Plus size={16} />
                         </button>
                       </div>
                       <input className="input-field" type="text" value={newGroupDesc}
                         onChange={(e) => setNewGroupDesc(e.target.value)} placeholder="Description (optional)" />
-                      <div className="flex flex-wrap gap-1.5">
+                      <input className="input-field" type="text" value={newGroupTheme}
+                        onChange={(e) => setNewGroupTheme(e.target.value)} placeholder="Newsletter theme (e.g. 'AI in healthcare')" />
+                      <div className="flex flex-col gap-1.5">
                         {groups.map((g) => (
-                          <div key={g.group_id} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs dark:border-slate-700 dark:bg-slate-800">
-                            <span className="font-medium">{g.name}</span>
-                            <span className="text-slate-400">({g.subscriber_count})</span>
+                          <div key={g.group_id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium">{g.name}</span>
+                                <span className="text-slate-400">({g.subscriber_count})</span>
+                              </div>
+                              {g.theme && (
+                                <div className="text-[10px] text-brand-600 dark:text-brand-400 mt-0.5">Theme: {g.theme}</div>
+                              )}
+                            </div>
                             <button onClick={() => handleDeleteGroup(g.group_id)} className="text-slate-300 transition hover:text-red-500">
                               <X size={12} />
                             </button>
@@ -723,6 +774,24 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                           <span className="text-xs text-slate-400">No groups yet.</span>
                         )}
                       </div>
+                      {groups.length > 0 && (
+                        <>
+                          <button
+                            onClick={handleBatchGenerate}
+                            disabled={batchLoading || !adminKey.trim()}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-brand-600 to-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:from-brand-700 hover:to-indigo-700 disabled:opacity-50"
+                          >
+                            {batchLoading ? (
+                              <><Loader2 size={14} className="animate-spin" /> Generating…</>
+                            ) : (
+                              <><Layers size={14} /> Generate for all groups</>
+                            )}
+                          </button>
+                          {batchStatus && (
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{batchStatus}</div>
+                          )}
+                        </>
+                      )}
                     </div>
 
                     {/* Add subscriber */}

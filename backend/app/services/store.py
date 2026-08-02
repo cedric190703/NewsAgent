@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS groups (
     group_id    TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    theme       TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL
 );
 
@@ -129,6 +130,11 @@ async def init_db() -> None:
     db = await _connect()
     try:
         await db.executescript(_SCHEMA)
+        # Migrations: add theme column to groups if missing
+        try:
+            await db.execute("ALTER TABLE groups ADD COLUMN theme TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # Column already exists
         await db.commit()
     finally:
         await db.close()
@@ -562,13 +568,13 @@ async def get_subscriber_emails_by_groups(group_ids: list[str]) -> list[str]:
 # --- groups ---
 
 
-async def create_group(group_id: str, name: str, description: str = "") -> None:
+async def create_group(group_id: str, name: str, description: str = "", theme: str = "") -> None:
     db = await _connect()
     try:
         await db.execute(
-            "INSERT OR REPLACE INTO groups (group_id, name, description, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (group_id, name, description, _now()),
+            "INSERT OR REPLACE INTO groups (group_id, name, description, theme, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (group_id, name, description, theme, _now()),
         )
         await db.commit()
     finally:
@@ -579,7 +585,7 @@ async def list_groups() -> list[dict[str, Any]]:
     db = await _connect()
     try:
         cursor = await db.execute(
-            "SELECT g.group_id, g.name, g.description, g.created_at, "
+            "SELECT g.group_id, g.name, g.description, g.theme, g.created_at, "
             "COUNT(sg.subscriber_id) AS subscriber_count "
             "FROM groups g "
             "LEFT JOIN subscriber_groups sg ON g.group_id = sg.group_id "

@@ -7,12 +7,22 @@ services:
     environment:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: mistral:latest
+      RESEND_API_KEY: ""
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
+      SMTP_FROM_EMAIL: newsletter@localhost
+      SMTP_FROM_NAME: "Good News Agent"
+      SMTP_USE_TLS: "false"
     ports:
       - "8000:8000"
     volumes:
       - backend-data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - mailpit
     restart: unless-stopped
 
   frontend:
@@ -26,6 +36,13 @@ services:
       - "5173:5173"
     depends_on:
       - backend
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
     restart: unless-stopped
 
 volumes:
