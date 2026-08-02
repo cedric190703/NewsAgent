@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timezone
 
 from app.graph.state import ArticleScores, GoodNewsMode, RawArticle
+from app.graph.theme_match import extract_theme_terms, extract_core_terms, theme_match_count
 
 MODE_WEIGHTS: dict[GoodNewsMode, dict[str, float]] = {
     GoodNewsMode.UPLIFTING: {
@@ -100,17 +101,42 @@ def _terms(text: str) -> set[str]:
 
 
 def relevance_score(theme: str, subtopic_query: str, article: RawArticle) -> float:
-    wanted = _terms(theme) | _terms(subtopic_query)
-    if not wanted:
+    # Core terms (original words only) — used as denominator
+    core_theme = extract_core_terms(theme)
+    core_query = extract_core_terms(subtopic_query)
+    core_wanted = core_theme | core_query
+    if not core_wanted:
         return 0.5
-    haystack = _terms(f"{article.title} {article.snippet}")
-    body = _terms(article.body[:4000])
 
-    title_overlap = len(wanted & _terms(article.title)) / len(wanted)
-    head_overlap = len(wanted & haystack) / len(wanted)
-    body_overlap = len(wanted & body) / len(wanted)
-    raw = 0.45 * title_overlap + 0.35 * head_overlap + 0.20 * body_overlap
-    return round(min(1.0, raw * 1.25), 3)
+    # Full synonym-expanded terms — used for counting hits
+    full_theme = extract_theme_terms(theme)
+    full_query = extract_theme_terms(subtopic_query)
+    full_wanted = full_theme | full_query
+
+    title = article.title
+    head = f"{article.title} {article.snippet}"
+    body = article.body[:4000]
+
+    # Count hits using full synonym set, but divide by core term count
+    title_hits = theme_match_count(title, full_wanted)
+    head_hits = theme_match_count(head, full_wanted)
+    body_hits = theme_match_count(body, full_wanted)
+
+    denom = max(len(core_wanted), 1)
+    title_overlap = min(1.0, title_hits / denom)
+    head_overlap = min(1.0, head_hits / denom)
+    body_overlap = min(1.0, body_hits / denom)
+
+    # Theme terms in title are critical
+    theme_denom = max(len(core_theme), 1)
+    theme_in_title = min(1.0, theme_match_count(title, full_theme) / theme_denom)
+    theme_in_head = min(1.0, theme_match_count(head, full_theme) / theme_denom)
+
+    raw = 0.35 * title_overlap + 0.25 * head_overlap + 0.15 * body_overlap + 0.25 * theme_in_title
+    # If theme terms not even in title/snippet, penalize
+    if theme_in_head == 0 and full_theme:
+        raw *= 0.4
+    return round(min(1.0, raw * 1.15), 3)
 
 
 def recency_score(

@@ -9,17 +9,21 @@ from app.core.config import settings
 from app.search.base import SearchHit, SearchProvider, SearchQuery
 from app.search.mock import MockProvider
 from app.search.newsapi import NewsApiProvider
-from app.search.rss import RssProvider
+from app.search.rss import RssProvider, dynamic_feed_urls
 from app.search.tavily import TavilyProvider
 
 
-def _build(name: str) -> SearchProvider | None:
+def _build(name: str, extra_feeds: list[str] | None = None) -> SearchProvider | None:
     if name == "tavily" and settings.tavily_api_key:
         return TavilyProvider(settings.tavily_api_key)
     if name == "newsapi" and settings.newsapi_key:
         return NewsApiProvider(settings.newsapi_key)
-    if name == "rss" and settings.rss_feeds:
-        return RssProvider(settings.rss_feeds)
+    if name == "rss":
+        feeds = list(settings.rss_feeds)
+        if extra_feeds:
+            feeds.extend(extra_feeds)
+        if feeds:
+            return RssProvider(feeds)
     if name == "mock":
         return MockProvider()
     return None
@@ -31,10 +35,16 @@ def available_provider_names() -> tuple[str, ...]:
     return tuple(names) or ("mock",)
 
 
-def get_providers(requested: list[str] | None = None) -> list[SearchProvider]:
+def get_providers(
+    requested: list[str] | None = None,
+    theme: str = "",
+    custom_feeds: list[str] | None = None,
+) -> list[SearchProvider]:
     """Resolve provider names to instances.
 
     `requested` empty or ["auto"] -> every configured real provider, else mock.
+    `theme` is used to generate dynamic Google News search RSS feeds.
+    `custom_feeds` are extra RSS URLs provided by the user.
     """
 
     names = list(requested or [])
@@ -43,7 +53,14 @@ def get_providers(requested: list[str] | None = None) -> list[SearchProvider]:
     if not names or names == ["auto"]:
         names = list(available_provider_names())
 
-    providers = [p for p in (_build(name) for name in names) if p is not None]
+    # Build extra feeds: dynamic theme-based + user-provided
+    extra_feeds: list[str] = []
+    if theme:
+        extra_feeds.extend(dynamic_feed_urls(theme))
+    if custom_feeds:
+        extra_feeds.extend(custom_feeds)
+
+    providers = [p for p in (_build(name, extra_feeds) for name in names) if p is not None]
     return providers or [MockProvider()]
 
 

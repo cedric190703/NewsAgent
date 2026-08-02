@@ -6,10 +6,11 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Header, Query
 from fastapi.responses import Response
 from sse_starlette.sse import EventSourceResponse
 
+from app.core.config import settings
 from app.graph.builder import TOPOLOGY
 from app.graph.runner import events_from, new_run_id, stream_run
 from app.graph.state import (
@@ -25,6 +26,11 @@ from app.services.exporter import to_html, to_markdown, to_pdf
 router = APIRouter()
 
 
+def _check_admin(x_admin_key: str | None) -> None:
+    if x_admin_key != settings.admin_password:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
 class RunRequest(RunConfig):
     """Re-export RunConfig so the API schema matches the graph's config."""
 
@@ -35,7 +41,8 @@ async def get_topology() -> dict[str, Any]:
 
 
 @router.post("/runs")
-async def create_run(request: RunRequest) -> dict[str, Any]:
+async def create_run(request: RunRequest, x_admin_key: str | None = Header(default=None)) -> dict[str, Any]:
+    _check_admin(x_admin_key)
     run_id = new_run_id()
     config = RunConfig(**request.model_dump())
     await store.save_run(run_id, config)
@@ -198,3 +205,99 @@ async def delete_schedule(schedule_id: str) -> dict[str, str]:
     if not deleted:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return {"status": "deleted"}
+
+
+# --- topics (admin) ---
+
+
+@router.post("/topics")
+async def create_topic(
+    title: str,
+    config: RunRequest,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    topic_id = uuid4().hex[:12]
+    run_config = RunConfig(**config.model_dump())
+    await store.create_topic(topic_id, title, run_config)
+    return {"topic_id": topic_id, "status": "created"}
+
+
+@router.get("/topics")
+async def list_topics() -> list[dict[str, Any]]:
+    topics = await store.list_topics()
+    for t in topics:
+        t["config"] = json.loads(t["config"]) if t.get("config") else None
+    return topics
+
+
+@router.get("/topics/{topic_id}")
+async def get_topic(topic_id: str) -> dict[str, Any]:
+    topic = await store.get_topic(topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    topic["config"] = json.loads(topic["config"]) if topic.get("config") else None
+    return topic
+
+
+@router.delete("/topics/{topic_id}")
+async def delete_topic(topic_id: str, x_admin_key: str | None = Header(default=None)) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    deleted = await store.delete_topic(topic_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {"status": "deleted"}
+
+
+# --- newsletters (public, for users) ---
+
+
+@router.get("/newsletters")
+async def list_newsletters(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return await store.list_newsletters(limit)
+
+
+# --- subscribers (admin) ---
+
+
+@router.post("/subscribers")
+async def add_subscriber(
+    email: str,
+    name: str = "",
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    subscriber_id = uuid4().hex[:12]
+    await store.add_subscriber(subscriber_id, email, name)
+    return {"subscriber_id": subscriber_id, "status": "added"}
+
+
+@router.get("/subscribers")
+async def list_subscribers() -> list[dict[str, Any]]:
+    return await store.list_subscribers()
+
+
+@router.delete("/subscribers/{subscriber_id}")
+async def delete_subscriber(
+    subscriber_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    deleted = await store.delete_subscriber(subscriber_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+    return {"status": "deleted"}
+
+
+# --- send newsletter to mailing list (admin) ---
+
+
+@router.post("/runs/{run_id}/send")
+async def send_newsletter(
+    run_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _check_admin(x_admin_key)
+    from app.services.mailer import send_newsletter as _send
+    result = await _send(run_id)
+    return result

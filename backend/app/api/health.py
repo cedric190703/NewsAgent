@@ -20,4 +20,5 @@ async def status() -> dict[str, object]:
         "search_providers": providers,
         "using_real_data": any(p != "mock" for p in providers),
         "rss_feeds_count": len(settings.rss_feeds) if settings.rss_feeds else 0,
+        "admin_enabled": True,
     }

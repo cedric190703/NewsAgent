@@ -30,6 +30,12 @@ from app.graph.state import (
     event,
 )
 from app.providers.base import LLMProvider
+from app.graph.theme_match import (
+    extract_theme_terms,
+    theme_matches,
+    theme_matches_both_concepts,
+    _concept_groups,
+)
 
 NODE = "curator"
 BATCH_SIZE = 5
@@ -99,6 +105,26 @@ async def curator_node(
     articles: list[RawArticle] = state.get("raw_articles", [])
     subtopic_by_id = {s.id: s for s in state.get("subtopics", [])}
     reference = config.date_to or datetime.now(timezone.utc)
+
+    # Hard filter: for multi-concept themes (e.g. "AI in healthcare"),
+    # require matching BOTH concepts. For single-concept, match any term.
+    combined_theme = " ".join(config.themes)
+    groups = _concept_groups(combined_theme)
+
+    if len(groups) >= 2:
+        before = len(articles)
+        articles = [a for a in articles if theme_matches_both_concepts(f"{a.title} {a.snippet}", combined_theme)]
+        filtered_out = before - len(articles)
+    else:
+        all_theme_terms: set[str] = set()
+        for theme in config.themes:
+            all_theme_terms |= extract_theme_terms(theme)
+        if all_theme_terms:
+            before = len(articles)
+            articles = [a for a in articles if theme_matches(f"{a.title} {a.snippet}", all_theme_terms)]
+            filtered_out = before - len(articles)
+        else:
+            filtered_out = 0
 
     if not articles:
         return {
@@ -190,7 +216,7 @@ async def curator_node(
                 "done",
                 detail=(
                     f"{len(selected)}/{len(scored)} selected "
-                    f"(mode={config.good_news_mode.value}, axes={active_axes})"
+                    f"({filtered_out} filtered, mode={config.good_news_mode.value}, axes={active_axes})"
                 ),
                 counts={
                     "scored": len(scored),

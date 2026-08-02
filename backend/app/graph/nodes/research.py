@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+import httpx
 
 from app.core.config import settings
 from app.graph.state import (
@@ -16,6 +19,7 @@ from app.graph.state import (
 )
 from app.search.base import SearchHit, SearchQuery
 from app.search.registry import get_providers, multi_search
+from app.search.rss import dynamic_feed_urls, fetch_article_url
 
 NODE = "research"
 WIDEN_NODE = "widen_queries"
@@ -43,10 +47,15 @@ async def research_node(task: ResearchTask) -> dict[str, Any]:
 
     config: RunConfig = task["config"]
     subtopic: SubTopic = task["subtopic"]
-    providers = get_providers(config.providers)
+    providers = get_providers(
+        config.providers,
+        theme=subtopic.theme or config.theme,
+        custom_feeds=config.custom_feeds,
+    )
 
     query = SearchQuery(
         query=subtopic.query,
+        theme=subtopic.theme or config.theme,
         max_results=settings.results_per_subtopic,
         date_from=config.date_from,
         date_to=config.date_to,
@@ -55,15 +64,25 @@ async def research_node(task: ResearchTask) -> dict[str, Any]:
     try:
         hits = await multi_search(providers, query)
     except Exception as exc:  # provider-level failure must not kill the run
-        return {
-            "errors": [f"research[{subtopic.label}]: {exc!r}"],
-            "events": [
-                event(NODE, "error", branch=subtopic.id, detail=str(exc)[:200])
-            ],
-        }
+        hits = []
+
+    # Fetch custom article URLs provided by the user
+    custom_hits: list[SearchHit] = []
+    if config.custom_urls:
+        timeout = httpx.Timeout(settings.source_fetch_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            results = await asyncio.gather(
+                *(fetch_article_url(url, client) for url in config.custom_urls),
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, SearchHit):
+                    custom_hits.append(r)
+
+    all_hits = hits + custom_hits
 
     articles: dict[str, RawArticle] = {}
-    for hit in hits:
+    for hit in all_hits:
         article = _to_article(hit, subtopic.id)
         if article is None:
             continue
@@ -73,6 +92,8 @@ async def research_node(task: ResearchTask) -> dict[str, Any]:
 
     found = list(articles.values())
     provider_names = ",".join(p.name for p in providers)
+    if custom_hits:
+        provider_names += ",custom_url"
     return {
         "raw_articles": found,
         "events": [
@@ -81,7 +102,7 @@ async def research_node(task: ResearchTask) -> dict[str, Any]:
                 "done",
                 branch=subtopic.id,
                 detail=f"{subtopic.label}: {len(found)} articles via {provider_names}",
-                counts={"articles": len(found), "hits": len(hits)},
+                counts={"articles": len(found), "hits": len(all_hits)},
             )
         ],
     }

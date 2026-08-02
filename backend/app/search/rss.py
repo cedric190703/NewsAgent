@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote_plus, urlsplit
 from xml.etree import ElementTree
 
 import httpx
@@ -15,6 +16,57 @@ from app.search.extract import enrich_hits, html_to_text
 
 ATOM = "{http://www.w3.org/2005/Atom}"
 MEDIA = "{http://search.yahoo.com/mrss/}"
+
+
+def dynamic_feed_urls(theme: str) -> list[str]:
+    """Generate Google News search RSS URLs based on the theme.
+
+    These act as a free search engine — Google returns articles matching
+    the keywords, packaged as RSS.
+    """
+    base = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    # Clean theme into search keywords
+    keywords = theme.strip().lower()
+    urls = [
+        base.format(q=quote_plus(keywords)),
+        base.format(q=quote_plus(f"{keywords} breakthrough")),
+        base.format(q=quote_plus(f"{keywords} latest news")),
+    ]
+    return urls
+
+
+async def fetch_article_url(url: str, client: httpx.AsyncClient) -> SearchHit | None:
+    """Fetch a direct article URL and extract a SearchHit from the HTML."""
+    try:
+        response = await client.get(url, follow_redirects=True, headers={
+            "User-Agent": "NewsAgent/0.2 (+https://github.com/)",
+        })
+        if response.status_code != 200:
+            return None
+        text = html_to_text(response.text)
+        if not text or len(text) < 100:
+            return None
+        # Try to extract title from HTML
+        title = ""
+        for prefix in ("<title>", "<TITLE>"):
+            start = response.text.find(prefix)
+            if start != -1:
+                end = response.text.find("</title>" if prefix == "<title>" else "</TITLE>", start)
+                if end != -1:
+                    title = response.text[start + len(prefix):end].strip()
+                    break
+        if not title:
+            title = url[:80]
+        return SearchHit(
+            url=url,
+            title=title,
+            source_name=urlsplit(url).netloc,
+            snippet=text[:1200],
+            content=text,
+            provider="custom_url",
+        )
+    except Exception:
+        return None
 
 
 class RssProvider:
@@ -41,7 +93,7 @@ class RssProvider:
             hits.extend(self._parse(payload, feed_url))
 
         matched = self._filter(hits, query)
-        return await enrich_hits(matched[: query.max_results])
+        return await enrich_hits(matched[: query.max_results * 3])
 
     async def _fetch(self, client: httpx.AsyncClient, feed_url: str) -> str | None:
         try:
@@ -106,10 +158,23 @@ class RssProvider:
                 image = enclosure.get("url")
 
         text = html_to_text(description)
+
+        # Extract real source name — Google News wraps articles but includes
+        # the original source in <source> or in the title after " - "
+        source_name = feed_title
+        source_el = entry.find("source")
+        if source_el is not None and source_el.text:
+            source_name = source_el.text.strip()
+        elif " - " in title:
+            # Title format from Google News: "Article Title - Source Name"
+            parts = title.rsplit(" - ", 1)
+            if len(parts) == 2 and len(parts[1]) < 80:
+                source_name = parts[1].strip()
+
         return SearchHit(
             url=link,
             title=title,
-            source_name=feed_title,
+            source_name=source_name,
             published_at=_parse_date(published),
             snippet=text[:1200],
             content=text,
@@ -118,16 +183,38 @@ class RssProvider:
         )
 
     def _filter(self, hits: list[SearchHit], query: SearchQuery) -> list[SearchHit]:
-        terms = {t.lower() for t in query.query.split() if len(t) > 2}
-        scored: list[tuple[float, SearchHit]] = []
-        for hit in hits:
-            if not _within_window(hit.published_at, query):
-                continue
-            haystack = f"{hit.title} {hit.snippet}".lower()
-            overlap = sum(1 for term in terms if term in haystack)
-            if terms and overlap == 0:
-                continue
-            scored.append((overlap / max(len(terms), 1), hit))
+        from app.graph.theme_match import (
+            extract_theme_terms,
+            theme_match_count,
+            theme_matches,
+            theme_matches_both_concepts,
+            _concept_groups,
+        )
+
+        theme = query.theme or query.query
+        groups = _concept_groups(theme)
+
+        if len(groups) >= 2:
+            # Multi-concept: require both concepts to match
+            scored = [
+                (theme_match_count(f"{h.title} {h.snippet}", extract_theme_terms(theme)), h)
+                for h in hits
+                if _within_window(h.published_at, query)
+                and theme_matches_both_concepts(f"{h.title} {h.snippet}", theme)
+            ]
+        else:
+            # Single concept: match any term
+            theme_terms = extract_theme_terms(theme)
+            if not theme_terms:
+                return hits[: query.max_results * 3]
+            scored = []
+            for h in hits:
+                if not _within_window(h.published_at, query):
+                    continue
+                haystack = f"{h.title} {h.snippet}"
+                if not theme_matches(haystack, theme_terms):
+                    continue
+                scored.append((theme_match_count(haystack, theme_terms), h))
 
         scored.sort(key=lambda pair: (pair[0], pair[1].published_at or _EPOCH), reverse=True)
         return [hit for _, hit in scored]

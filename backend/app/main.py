@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.news import router as news_router
 from app.api.runs import router as runs_router
@@ -28,6 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(health_router, prefix="/api", tags=["health"])
 app.include_router(news_router, prefix="/api/news", tags=["news"])
 app.include_router(runs_router, prefix="/api", tags=["runs"])

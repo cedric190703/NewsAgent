@@ -26,6 +26,20 @@ CREATE TABLE IF NOT EXISTS runs (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS topics (
+    topic_id    TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    config      TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subscribers (
+    subscriber_id TEXT PRIMARY KEY,
+    email         TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bookmarks (
     run_id      TEXT NOT NULL,
     article_id  TEXT NOT NULL,
@@ -251,5 +265,138 @@ async def delete_schedule(schedule_id: str) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+# --- topics ---
+
+
+async def create_topic(topic_id: str, title: str, config: RunConfig) -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            "INSERT OR REPLACE INTO topics (topic_id, title, config, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (topic_id, title, config.model_dump_json(), _now()),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_topics() -> list[dict[str, Any]]:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT topic_id, title, config, created_at FROM topics ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_topic(topic_id: str) -> dict[str, Any] | None:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT topic_id, title, config, created_at FROM topics WHERE topic_id = ?",
+            (topic_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def delete_topic(topic_id: str) -> bool:
+    db = await _connect()
+    try:
+        cursor = await db.execute("DELETE FROM topics WHERE topic_id = ?", (topic_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+# --- newsletter listing for users ---
+
+
+async def list_newsletters(limit: int = 50) -> list[dict[str, Any]]:
+    """Return completed newsletters for the public user view."""
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT run_id, config, newsletter, created_at, finished_at "
+            "FROM runs WHERE status IN ('done', 'partial') AND newsletter IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            config = json.loads(row["config"]) if row["config"] else {}
+            newsletter = json.loads(row["newsletter"]) if row["newsletter"] else None
+            results.append({
+                "run_id": row["run_id"],
+                "theme": config.get("theme", "Untitled"),
+                "title": (newsletter or {}).get("title", config.get("theme", "Untitled")),
+                "subtitle": (newsletter or {}).get("subtitle", ""),
+                "newsletter": newsletter,
+                "created_at": row["created_at"],
+                "finished_at": row["finished_at"],
+            })
+        return results
+    finally:
+        await db.close()
+
+
+# --- subscribers ---
+
+
+async def add_subscriber(subscriber_id: str, email: str, name: str = "") -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            "INSERT OR REPLACE INTO subscribers (subscriber_id, email, name, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (subscriber_id, email, name, _now()),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_subscribers() -> list[dict[str, Any]]:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT subscriber_id, email, name, created_at FROM subscribers ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def delete_subscriber(subscriber_id: str) -> bool:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM subscribers WHERE subscriber_id = ?", (subscriber_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_subscriber_emails() -> list[str]:
+    db = await _connect()
+    try:
+        cursor = await db.execute("SELECT email FROM subscribers")
+        rows = await cursor.fetchall()
+        return [row["email"] for row in rows]
     finally:
         await db.close()

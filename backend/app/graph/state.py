@@ -38,9 +38,9 @@ class Length(str, Enum):
 
 
 LENGTH_TARGETS: dict[Length, dict[str, int]] = {
-    Length.BRIEF: {"articles": 5, "bullets": 2, "intro_words": 60},
-    Length.STANDARD: {"articles": 9, "bullets": 3, "intro_words": 110},
-    Length.DEEP: {"articles": 15, "bullets": 5, "intro_words": 180},
+    Length.BRIEF: {"articles": 8, "bullets": 2, "intro_words": 60},
+    Length.STANDARD: {"articles": 15, "bullets": 3, "intro_words": 110},
+    Length.DEEP: {"articles": 25, "bullets": 5, "intro_words": 180},
 }
 
 
@@ -52,12 +52,14 @@ class RunConfig(BaseModel):
     subtopic_count: int = Field(default=4, ge=1, le=8)
     date_from: datetime | None = None
     date_to: datetime | None = None
-    max_sources: int = Field(default=12, ge=1, le=40)
+    max_sources: int = Field(default=12, ge=1, le=60)
     tone: Tone = Tone.NEUTRAL
     length: Length = Length.STANDARD
     good_news_mode: GoodNewsMode = GoodNewsMode.BALANCED
     enable_factcheck: bool = True
     providers: list[str] = Field(default_factory=list)
+    custom_feeds: list[str] = Field(default_factory=list, description="Extra RSS/Atom feed URLs to fetch")
+    custom_urls: list[str] = Field(default_factory=list, description="Direct article URLs to fetch and include")
 
     @property
     def themes(self) -> list[str]:

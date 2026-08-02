@@ -25,16 +25,65 @@ class Settings(BaseSettings):
     newsapi_language: str = "en"
     rss_feeds: list[str] = Field(
         default_factory=lambda: [
+            # General news
             "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
             "https://feeds.bbci.co.uk/news/rss.xml",
+            "https://feeds.bbci.co.uk/news/technology/rss.xml",
+            "https://feeds.bbci.co.uk/news/science-environment/rss.xml",
+            "https://feeds.bbci.co.uk/news/health/rss.xml",
             "https://www.theverge.com/rss/index.xml",
             "https://feeds.arstechnica.com/arstechnica/index",
             "https://www.wired.com/feed/rss",
+            "https://www.theguardian.com/world/rss",
+            "https://www.theguardian.com/science/rss",
+            "https://www.theguardian.com/technology/rss",
+            "https://www.theguardian.com/society/health/rss",
+            "https://feeds.reuters.com/reuters/topNews",
+            "https://feeds.reuters.com/reuters/businessNews",
+            "https://feeds.reuters.com/reuters/technologyNews",
+            "https://hnrss.org/frontpage",
+            "https://www.techmeme.com/feed.xml",
+            "https://feeds.feedburner.com/TechCrunch/",
+            "https://www.engadget.com/rss.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",
+            # Science / research
             "https://feeds.nature.com/nature/rss/current",
             "https://science.sciencemag.org/rss/current.xml",
-            "https://www.theguardian.com/world/rss",
+            "https://www.sciencedaily.com/rss/all.xml",
+            "https://www.sciencedaily.com/rss/health_medicine.xml",
+            "https://www.sciencedaily.com/rss/computers_math.xml",
+            "https://phys.org/rss-feed/breaking/",
+            "https://www.eurekalert.org/rss/technology_engineering.xml",
+            "https://www.eurekalert.org/rss/medicine_health.xml",
+            # Space / energy
+            "https://spacenews.com/feed/",
+            # AI / ML focused
+            "https://news.google.com/rss/search?q=AI+artificial+intelligence+machine+learning&hl=en-US&gl=US&ceid=US:en",
+            "https://news.google.com/rss/search?q=AI+healthcare+medical&hl=en-US&gl=US&ceid=US:en",
+            "https://news.google.com/rss/search?q=artificial+intelligence+medicine+hospital&hl=en-US&gl=US&ceid=US:en",
+            # Health / medical focused
+            "https://www.medscape.com/rss/medicalstudents_headlines",
+            "https://www.statnews.com/feed/",
+            "https://www.fiercehealthcare.com/rss/xml",
+            "https://www.healthcareitnews.com/rss.xml",
+            "https://www.mobihealthnews.com/rss.xml",
         ]
     )
+
+    # --- admin ---
+    admin_password: str = "admin123"
+
+    # --- email / mailing list ---
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Good News Agent"
+    smtp_use_tls: bool = True
 
     # --- fetching / extraction ---
     source_fetch_timeout_seconds: int = 15
@@ -44,10 +93,10 @@ class Settings(BaseSettings):
     max_article_chars: int = 16000
 
     # --- graph behaviour ---
-    results_per_subtopic: int = 8
-    min_relevant_results: int = 4
+    results_per_subtopic: int = 20
+    min_relevant_results: int = 2
     max_search_attempts: int = 2
-    relevance_threshold: float = 0.35
+    relevance_threshold: float = 0.25
     enable_factcheck: bool = True
 
     # --- storage ---

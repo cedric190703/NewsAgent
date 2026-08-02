@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 class SearchQuery(BaseModel):
     query: str
-    max_results: int = Field(default=8, ge=1, le=50)
+    theme: str = ""
+    max_results: int = Field(default=10, ge=1, le=50)
     date_from: datetime | None = None
     date_to: datetime | None = None
 

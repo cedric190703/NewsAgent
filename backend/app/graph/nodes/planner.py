@@ -13,11 +13,6 @@ from app.providers.base import LLMProvider
 
 NODE = "planner"
 
-SYSTEM = (
-    "You are a news editor planning research angles. You never invent facts; "
-    "you only produce search queries an assistant will actually run."
-)
-
 FALLBACK_ANGLES = [
     ("recent breakthroughs", "{theme} breakthrough results announced"),
     ("policy and funding", "{theme} policy funding decision"),
@@ -28,6 +23,13 @@ FALLBACK_ANGLES = [
     ("risks and criticism", "{theme} criticism concerns audit"),
     ("what changed this week", "{theme} this week update"),
 ]
+
+PLANNER_SYSTEM = (
+    "You are a news editor planning research angles. You never invent facts; "
+    "you only produce search queries an assistant will actually run. "
+    "CRITICAL: every query MUST contain the exact theme words — never generate "
+    "a query that could match unrelated topics."
+)
 
 
 class PlannedSubTopic(BaseModel):
@@ -75,12 +77,13 @@ async def _plan_theme(
         f"Theme: {theme}\n"
         f"{window}"
         f"Break this theme into exactly {count} distinct research angles.\n"
-        "Rules: angles must not overlap; each query must be a short, literal "
-        "news search string (no boolean operators, no quotes); prefer angles "
-        "likely to surface concrete, verifiable developments."
+        "Rules: angles must not overlap; each query MUST start with the theme "
+        "words and be a short, literal news search string (no boolean operators, "
+        "no quotes); prefer angles likely to surface concrete, verifiable developments. "
+        "Never generate a query that could match unrelated topics."
     )
 
-    parsed = await try_json(provider, SYSTEM, user, PlannerOutput)
+    parsed = await try_json(provider, PLANNER_SYSTEM, user, PlannerOutput)
     if parsed is None or not parsed.subtopics:
         return _fallback(theme, count), False
 

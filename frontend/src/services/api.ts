@@ -14,6 +14,8 @@ export interface RunConfig {
   good_news_mode?: GoodNewsMode;
   enable_factcheck?: boolean;
   providers?: string[];
+  custom_feeds?: string[];
+  custom_urls?: string[];
 }
 
 export interface CreateRunResponse {
@@ -162,8 +164,16 @@ async function deleteJSON(path: string): Promise<void> {
   if (!res.ok) throw new Error(await res.text());
 }
 
-export async function createRun(config: RunConfig): Promise<CreateRunResponse> {
-  return postJSON("/api/runs", config);
+export async function createRun(config: RunConfig, adminKey?: string): Promise<CreateRunResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/runs`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function getTopology(): Promise<Topology> {
@@ -180,6 +190,96 @@ export interface AppStatus {
 
 export async function getStatus(): Promise<AppStatus> {
   return getJSON("/api/status");
+}
+
+export async function verifyAdminKey(adminKey: string): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/api/auth/verify`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  return res.ok;
+}
+
+export interface Topic {
+  topic_id: string;
+  title: string;
+  config: RunConfig | null;
+  created_at: string;
+}
+
+export interface NewsletterListItem {
+  run_id: string;
+  theme: string;
+  title: string;
+  subtitle: string;
+  newsletter: Newsletter | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export async function listTopics(): Promise<Topic[]> {
+  return getJSON("/api/topics");
+}
+
+export async function createTopic(title: string, config: RunConfig, adminKey: string): Promise<{ topic_id: string }> {
+  const res = await fetch(`${API_BASE}/api/topics?title=${encodeURIComponent(title)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteTopic(topicId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function listNewsletters(): Promise<NewsletterListItem[]> {
+  return getJSON("/api/newsletters");
+}
+
+export interface Subscriber {
+  subscriber_id: string;
+  email: string;
+  name: string;
+  created_at: string;
+}
+
+export async function listSubscribers(): Promise<Subscriber[]> {
+  return getJSON("/api/subscribers");
+}
+
+export async function addSubscriber(email: string, name: string, adminKey: string): Promise<{ subscriber_id: string }> {
+  const params = new URLSearchParams({ email });
+  if (name) params.set("name", name);
+  const res = await fetch(`${API_BASE}/api/subscribers?${params}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteSubscriber(subscriberId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/subscribers/${subscriberId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function sendNewsletter(runId: string, adminKey: string): Promise<{ sent: number; failed: number; detail: string }> {
+  const res = await fetch(`${API_BASE}/api/runs/${runId}/send`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function listRuns(): Promise<RunHistoryItem[]> {
