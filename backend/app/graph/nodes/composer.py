@@ -29,7 +29,10 @@ NODE = "composer"
 
 SYSTEM = (
     "You are a newsletter editor. You may only use the summaries provided. "
-    "Do not invent stories, statistics or URLs. Do not include any links."
+    "Do not invent stories, statistics or URLs. Do not include any links. "
+    "When a target audience is specified, tailor the title, subtitle, intro, "
+    "and section blurbs to speak directly to that audience's interests, "
+    "priorities, and level of expertise."
 )
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -128,8 +131,13 @@ async def composer_node(
         + "\n".join(f"- {item.headline} ({item.source_name})" for item in items)
         for subtopic, items in groups
     )
+    audience_line = ""
+    if config.audience.strip():
+        audience_line = f"Target audience: {config.audience.strip()}\n"
+
     user = (
         f"Theme(s): {', '.join(config.themes)}\n"
+        f"{audience_line}"
         f"Tone: {config.tone.value}\nLength: {config.length.value}\n"
         f"Curation mode: {config.good_news_mode.value}\n\n"
         f"Sections and their stories:\n{digest}\n\n"

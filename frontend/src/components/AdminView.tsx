@@ -93,6 +93,7 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   onLogout: () => void;
 }) {
   const [theme, setTheme] = useState("");
+  const [audience, setAudience] = useState("");
   const [mode, setMode] = useState<GoodNewsMode>("balanced");
   const [tone, setTone] = useState<Tone>("neutral");
   const [length, setLength] = useState<Length>("standard");
@@ -196,6 +197,7 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
 
     const config: RunConfig = {
       theme: theme.trim(),
+      audience: audience.trim() || undefined,
       good_news_mode: mode,
       tone,
       length,
@@ -370,6 +372,18 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                 disabled={streaming}
               />
             </div>
+            <div>
+              <label className="label-text" htmlFor="audience">Target Audience</label>
+              <input
+                id="audience"
+                className="input-field"
+                type="text"
+                value={audience}
+                onChange={(e) => setAudience(e.target.value)}
+                placeholder="e.g. healthcare execs, climate investors…"
+                disabled={streaming}
+              />
+            </div>
 
             <div className="flex gap-2">
               <ShimmerButton type="submit" disabled={!theme.trim() || streaming || !adminKey.trim()}
@@ -531,6 +545,13 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                       <input id="cfg-theme" className="input-field" type="text" value={theme}
                         onChange={(e) => setTheme(e.target.value)}
                         placeholder="e.g. ocean restoration, AI in healthcare…" disabled={streaming} />
+                    </div>
+                    <div>
+                      <label className="label-text" htmlFor="cfg-audience">Target Audience</label>
+                      <input id="cfg-audience" className="input-field" type="text" value={audience}
+                        onChange={(e) => setAudience(e.target.value)}
+                        placeholder="e.g. healthcare execs, climate investors, startup founders…" disabled={streaming} />
+                      <p className="mt-1 text-xs text-slate-400">Describe who will receive this newsletter — the AI will tailor research angles, article selection, and writing to their interests.</p>
                     </div>
                     <button type="button" onClick={() => setShowFilters(!showFilters)}
                       className="flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">

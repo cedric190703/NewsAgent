@@ -5,6 +5,7 @@ export type Length = "brief" | "standard" | "deep";
 export interface RunConfig {
   theme: string;
   extra_themes?: string[];
+  audience?: string;
   subtopic_count?: number;
   date_from?: string | null;
   date_to?: string | null;

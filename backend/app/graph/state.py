@@ -49,6 +49,7 @@ class RunConfig(BaseModel):
 
     theme: str = Field(min_length=3, max_length=500)
     extra_themes: list[str] = Field(default_factory=list)
+    audience: str = Field(default="", max_length=500, description="Target audience description for tailoring content")
     subtopic_count: int = Field(default=4, ge=1, le=8)
     date_from: datetime | None = None
     date_to: datetime | None = None

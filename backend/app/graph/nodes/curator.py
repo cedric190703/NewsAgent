@@ -42,12 +42,16 @@ BATCH_SIZE = 5
 
 SYSTEM = (
     "You are a strict news curator. You judge only the text provided. "
-    "You never add information that is not in the text."
+    "You never add information that is not in the text. "
+    "When a target audience is specified, you must factor how relevant "
+    "and useful each article is for that audience into your relevance score."
 )
 
 RUBRIC = (
     "Score each item from 0.0 to 1.0 on three independent axes:\n"
-    "- relevance: does it actually address the theme and angle?\n"
+    "- relevance: does it actually address the theme and angle? If a target "
+    "audience is specified, also factor how useful and actionable this is for "
+    "that audience.\n"
     "- valence: is the OUTCOME described constructive (progress, solutions, "
     "recovery, wins)? 0.0 = purely bad news, 0.5 = neutral, 1.0 = clearly good.\n"
     "- signal: is it substantive journalism (specific, sourced, verifiable, "
@@ -85,8 +89,14 @@ async def _score_batch(
             f"text: {article.body[:1200]}"
         )
 
+    audience_line = ""
+    if config.audience.strip():
+        audience_line = f"Target audience: {config.audience.strip()}\n"
+
     user = (
-        f"Theme(s): {', '.join(config.themes)}\n{RUBRIC}\n\n"
+        f"Theme(s): {', '.join(config.themes)}\n"
+        f"{audience_line}"
+        f"{RUBRIC}\n\n"
         f"Items:\n{chr(10).join(lines)}\n\n"
         "Return one entry per id, reusing the exact id strings."
     )
