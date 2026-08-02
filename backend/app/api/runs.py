@@ -257,6 +257,11 @@ async def list_newsletters(limit: int = Query(default=50, ge=1, le=200)) -> list
     return await store.list_newsletters(limit)
 
 
+@router.get("/newsletters/mine")
+async def list_my_newsletters(email: str = Query(...), limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return await store.list_newsletters_for_subscriber(email, limit)
+
+
 # --- subscribers (admin) ---
 
 
@@ -357,3 +362,58 @@ async def remove_from_group(
     _check_admin(x_admin_key)
     await store.remove_subscriber_from_group(subscriber_id, group_id)
     return {"status": "removed"}
+
+
+# --- questions (admin) ---
+
+
+@router.get("/questions")
+async def list_questions() -> list[dict[str, Any]]:
+    return await store.list_questions()
+
+
+@router.post("/questions")
+async def create_question(
+    body: dict[str, Any],
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    qid = uuid4().hex[:12]
+    text = body.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Question text is required")
+    position = body.get("position", 0)
+    await store.create_question(qid, text, position)
+    options = body.get("options", [])
+    for i, opt in enumerate(options):
+        oid = uuid4().hex[:12]
+        await store.create_option(oid, qid, opt.get("text", "").strip(), opt.get("group_name", "").strip(), i)
+    return {"question_id": qid}
+
+
+@router.delete("/questions/{question_id}")
+async def delete_question(
+    question_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    deleted = await store.delete_question(question_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"status": "deleted"}
+
+
+# --- registration (public) ---
+
+
+@router.post("/register")
+async def register(body: dict[str, Any]) -> dict[str, Any]:
+    email = body.get("email", "").strip()
+    name = body.get("name", "").strip()
+    answers = body.get("answers", [])
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if not answers:
+        raise HTTPException(status_code=400, detail="Answers are required")
+    result = await store.register_subscriber(email, name, answers)
+    return result

@@ -244,6 +244,10 @@ export async function listNewsletters(): Promise<NewsletterListItem[]> {
   return getJSON("/api/newsletters");
 }
 
+export async function listMyNewsletters(email: string): Promise<NewsletterListItem[]> {
+  return getJSON(`/api/newsletters/mine?email=${encodeURIComponent(email)}`);
+}
+
 export interface SubscriberGroup {
   group_id: string;
   name: string;
@@ -434,4 +438,60 @@ export function streamRunEvents(
   })();
 
   return controller;
+}
+
+// --- Questions & Registration ---
+
+export interface QuestionOption {
+  option_id: string;
+  text: string;
+  group_name: string;
+  position: number;
+}
+
+export interface Question {
+  question_id: string;
+  text: string;
+  position: number;
+  options: QuestionOption[];
+}
+
+export async function listQuestions(): Promise<Question[]> {
+  return getJSON("/api/questions");
+}
+
+export async function createQuestion(
+  text: string,
+  options: { text: string; group_name: string }[],
+  adminKey: string
+): Promise<{ question_id: string }> {
+  const res = await fetch(`${API_BASE}/api/questions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify({ text, options }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteQuestion(questionId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/questions/${questionId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function registerSubscriber(
+  email: string,
+  name: string,
+  answers: { question_id: string; option_ids: string[] }[]
+): Promise<{ subscriber_id: string; assigned_groups: string[] }> {
+  const res = await fetch(`${API_BASE}/api/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name, answers }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }

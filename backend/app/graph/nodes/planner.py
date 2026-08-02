@@ -18,10 +18,12 @@ FALLBACK_ANGLES = [
     ("policy and funding", "{theme} policy funding decision"),
     ("research findings", "{theme} peer-reviewed study findings"),
     ("real-world deployment", "{theme} deployment rollout results"),
+    ("market impact", "{theme} market growth investment"),
     ("community impact", "{theme} community impact outcomes"),
     ("tools and launches", "{theme} launch release available"),
     ("risks and criticism", "{theme} criticism concerns audit"),
     ("what changed this week", "{theme} this week update"),
+    ("data and benchmarks", "{theme} data benchmark report statistics"),
 ]
 
 PLANNER_SYSTEM = (
@@ -30,7 +32,11 @@ PLANNER_SYSTEM = (
     "CRITICAL: every query MUST contain the exact theme words — never generate "
     "a query that could match unrelated topics. "
     "When a target audience is specified, prioritise angles that surface "
-    "developments most useful and actionable for that audience."
+    "developments most useful and actionable for that audience. "
+    "Diversify angles across these dimensions: breakthroughs/results, "
+    "policy/regulation, market/business impact, research/data, "
+    "practical applications, risks/criticism, and community impact. "
+    "Avoid overlapping angles — each should surface distinct stories."
 )
 
 

@@ -19,25 +19,25 @@ from app.graph.theme_match import extract_theme_terms, extract_core_terms, theme
 
 MODE_WEIGHTS: dict[GoodNewsMode, dict[str, float]] = {
     GoodNewsMode.UPLIFTING: {
-        "relevance": 0.30,
-        "recency": 0.15,
+        "relevance": 0.38,
+        "recency": 0.12,
         "credibility": 0.15,
-        "goodness_valence": 0.30,
+        "goodness_valence": 0.25,
         "goodness_signal": 0.10,
     },
     GoodNewsMode.HIGH_SIGNAL: {
-        "relevance": 0.30,
-        "recency": 0.15,
+        "relevance": 0.38,
+        "recency": 0.12,
         "credibility": 0.20,
         "goodness_valence": 0.00,
-        "goodness_signal": 0.35,
+        "goodness_signal": 0.30,
     },
     GoodNewsMode.BALANCED: {
-        "relevance": 0.30,
-        "recency": 0.15,
+        "relevance": 0.38,
+        "recency": 0.12,
         "credibility": 0.15,
-        "goodness_valence": 0.20,
-        "goodness_signal": 0.20,
+        "goodness_valence": 0.17,
+        "goodness_signal": 0.18,
     },
 }
 
@@ -55,6 +55,8 @@ TIER_TWO = {
     "lemonde.fr", "spiegel.de", "elpais.com", "scientificamerican.com",
     "ieee.org", "phys.org", "sciencedaily.com", "goodnewsnetwork.org",
     "positive.news", "reasonstobecheerful.world", "solutionsjournalism.org",
+    "techcrunch.com", "engadget.com", "theinformation.com", "semafor.com",
+    "restofworld.org", "calmatters.org", "grist.org", "insideclimatenews.org",
 }
 LOW_TRUST_MARKERS = (
     "blogspot.", ".medium.com", "wordpress.com", "substack.com",
@@ -72,6 +74,9 @@ POSITIVE_TERMS = (
     "first time", "eradicated", "reforest", "protected", "cleaner", "cheaper",
     "faster", "safer", "expanded access", "funding secured", "wins", "won",
     "declines in poverty", "reduced emissions", "ahead of schedule",
+    "innovation", "innovative", "achievement", "advancement", "pioneering",
+    "grant", "investment", "partnership", "collaboration", "breakthrough",
+    "effective", "promising", "transformative", "scalable", "sustainable",
 )
 NEGATIVE_TERMS = (
     "death", "deaths", "killed", "dies", "crisis", "collapse", "collapsed",
@@ -79,17 +84,23 @@ NEGATIVE_TERMS = (
     "outbreak", "disaster", "catastrophe", "shortfall", "delayed", "delay",
     "failure", "failed", "warns", "warning", "threat", "recall", "banned",
     "worst", "plunge", "plummet", "recession", "corruption", "abuse",
+    "controversy", "controversial", "protest", "strike", "boycott", "sanction",
+    "casualty", "casualties", "victim", "victims", "damage", "damaged",
 )
 HYPE_TERMS = (
     "you won't believe", "shocking", "stunned", "insane", "mind-blowing",
     "this one trick", "changed everything", "goes viral", "slams", "destroys",
     "epic", "brutal", "everything you need to know", "here's why",
     "experts are stunned", "could change everything", "click",
+    "breaking", "must see", "watch this", "unbelievable", "jaw-dropping",
 )
 SIGNAL_TERMS = (
     "according to", "study", "peer-reviewed", "researchers", "data",
     "report", "published", "analysis", "percent", "%", "survey", "trial",
     "dataset", "audit", "official", "spokesperson", "figures",
+    "statistics", "measured", "experiment", "control group", "sample",
+    "methodology", "findings", "results", "evidence", "documented",
+    "confirmed", "verified", "source", "cited", "reference",
 )
 CLICKBAIT_TITLE_RE = re.compile(
     r"^\s*(\d{1,2})\s+(things|reasons|ways|facts|signs)\b", re.I
@@ -132,10 +143,26 @@ def relevance_score(theme: str, subtopic_query: str, article: RawArticle) -> flo
     theme_in_title = min(1.0, theme_match_count(title, full_theme) / theme_denom)
     theme_in_head = min(1.0, theme_match_count(head, full_theme) / theme_denom)
 
-    raw = 0.35 * title_overlap + 0.25 * head_overlap + 0.15 * body_overlap + 0.25 * theme_in_title
-    # If theme terms not even in title/snippet, penalize
+    # Body keyword density: how many distinct theme terms appear in body
+    body_theme_hits = theme_match_count(body, full_theme)
+    body_theme_density = min(1.0, body_theme_hits / max(len(full_theme), 1))
+
+    # Weighted: title is most important, then head, then body density
+    raw = (
+        0.38 * title_overlap
+        + 0.22 * head_overlap
+        + 0.10 * body_overlap
+        + 0.20 * theme_in_title
+        + 0.10 * body_theme_density
+    )
+
+    # If theme terms not even in title/snippet, penalize heavily
     if theme_in_head == 0 and full_theme:
-        raw *= 0.4
+        raw *= 0.3
+    # If theme terms in title but not in body, it's likely tangential
+    elif theme_in_title > 0 and body_theme_density == 0:
+        raw *= 0.6
+
     return round(min(1.0, raw * 1.15), 3)
 
 

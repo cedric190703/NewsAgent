@@ -19,10 +19,10 @@ import {
   Database,
   Plus,
   LogOut,
-  FolderPlus,
   Users,
   Send,
   RefreshCw,
+  HelpCircle,
 } from "lucide-react";
 
 import {
@@ -35,7 +35,6 @@ import {
   type RunConfig,
   type Tone,
   type Topology,
-  type Topic,
   type NewsletterListItem,
   addBookmark,
   createRun,
@@ -45,9 +44,6 @@ import {
   getStatus,
   getTopology,
   listRuns,
-  listTopics,
-  createTopic,
-  deleteTopic,
   listNewsletters,
   listSubscribers,
   addSubscriber,
@@ -60,14 +56,17 @@ import {
   removeSubscriberFromGroup,
   removeBookmark,
   streamRunEvents,
+  listQuestions,
+  createQuestion,
+  deleteQuestion,
   type RunHistoryItem,
   type Subscriber,
   type Group,
+  type Question,
 } from "../services/api";
 import { PipelineView } from "./PipelineView";
-import { NewsletterView } from "./NewsletterView";
+import { Logo } from "./Logo";
 import { DotPattern } from "./ui/dot-pattern";
-import { AnimatedGradientText } from "./ui/animated-gradient-text";
 import { ShimmerButton } from "./ui/shimmer-button";
 import { BorderBeam } from "./ui/border-beam";
 import { NumberTicker } from "./ui/number-ticker";
@@ -118,10 +117,8 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   const [error, setError] = useState<string | null>(null);
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<RunHistoryItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"pipeline" | "newsletter" | "configs">("pipeline");
+  const [activeTab, setActiveTab] = useState<"pipeline" | "configs">("pipeline");
   const [status, setStatus] = useState<AppStatus | null>(null);
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [newTopicTitle, setNewTopicTitle] = useState("");
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [newSubEmail, setNewSubEmail] = useState("");
@@ -130,7 +127,14 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   const [newGroupDesc, setNewGroupDesc] = useState("");
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   const [sendStatus, setSendStatus] = useState<string | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<"generate" | "topics" | "subscribers" | "history">("generate");
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const [sidebarTab, setSidebarTab] = useState<"generate" | "subscribers" | "questions" | "history">("generate");
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [newQuestionText, setNewQuestionText] = useState("");
+  const [newQuestionOptions, setNewQuestionOptions] = useState<{ text: string; group_name: string }[]>([
+    { text: "", group_name: "" },
+    { text: "", group_name: "" },
+  ]);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -142,15 +146,10 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   useEffect(() => {
     getTopology().then(setTopology).catch(() => {});
     getStatus().then(setStatus).catch(() => {});
-    listTopics().then(setTopics).catch(() => {});
   }, []);
 
   const refreshHistory = useCallback(() => {
     listRuns().then(setHistory).catch(() => {});
-  }, []);
-
-  const refreshTopics = useCallback(() => {
-    listTopics().then(setTopics).catch(() => {});
   }, []);
 
   const refreshSubscribers = useCallback(() => {
@@ -159,6 +158,10 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
 
   const refreshGroups = useCallback(() => {
     listGroups().then(setGroups).catch(() => {});
+  }, []);
+
+  const refreshQuestions = useCallback(() => {
+    listQuestions().then(setQuestions).catch(() => {});
   }, []);
 
   const handleBookmark = useCallback(
@@ -231,7 +234,7 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
       abortRef.current = streamRunEvents(
         run_id,
         (evt) => setEvents((prev) => [...prev, evt]),
-        (nl) => { setNewsletter(nl); setActiveTab("newsletter"); },
+        (nl) => { setNewsletter(nl); },
         (msg) => setError(msg),
         () => { setStreaming(false); refreshHistory(); },
       );
@@ -244,30 +247,6 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   const handleCancel = () => {
     abortRef.current?.abort();
     setStreaming(false);
-  };
-
-  const handleCreateTopic = async () => {
-    if (!newTopicTitle.trim() || !adminKey.trim()) return;
-    const config: RunConfig = {
-      theme: newTopicTitle.trim(),
-      good_news_mode: mode,
-      tone,
-      length,
-      subtopic_count: subtopicCount,
-      max_sources: maxSources,
-      enable_factcheck: factcheck,
-    };
-    try {
-      await createTopic(newTopicTitle.trim(), config, adminKey);
-      setNewTopicTitle("");
-      refreshTopics();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create topic");
-    }
-  };
-
-  const handleDeleteTopic = async (id: string) => {
-    try { await deleteTopic(id, adminKey); refreshTopics(); } catch { /* ignore */ }
   };
 
   const handleAddSubscriber = async () => {
@@ -327,12 +306,31 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
     });
   };
 
+  const handleCreateQuestion = async () => {
+    if (!newQuestionText.trim() || !adminKey.trim()) return;
+    const opts = newQuestionOptions.filter(o => o.text.trim() && o.group_name.trim());
+    if (opts.length < 2) { setError("Need at least 2 options with text and group name"); return; }
+    try {
+      await createQuestion(newQuestionText.trim(), opts, adminKey);
+      setNewQuestionText("");
+      setNewQuestionOptions([{ text: "", group_name: "" }, { text: "", group_name: "" }]);
+      refreshQuestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create question");
+    }
+  };
+
+  const handleDeleteQuestion = async (id: string) => {
+    try { await deleteQuestion(id, adminKey); refreshQuestions(); } catch { /* ignore */ }
+  };
+
   const handleSendNewsletter = async () => {
-    if (!runId || !adminKey.trim()) return;
+    const targetRunId = selectedRunId || runId;
+    if (!targetRunId || !adminKey.trim()) return;
     setSendStatus("Sending…");
     try {
       const groupIds = selectedGroupIds.size > 0 ? Array.from(selectedGroupIds) : undefined;
-      const result = await sendNewsletter(runId, adminKey, groupIds);
+      const result = await sendNewsletter(targetRunId, adminKey, groupIds);
       setSendStatus(result.detail);
     } catch (err) {
       setSendStatus(err instanceof Error ? err.message : "Failed to send");
@@ -345,7 +343,6 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
       setRunId(id);
       if (detail.newsletter) {
         setNewsletter(detail.newsletter);
-        setActiveTab("newsletter");
       }
       setEvents([]);
       setError(null);
@@ -359,8 +356,6 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
     try { await deleteRun(id); refreshHistory(); } catch { /* ignore */ }
   };
 
-  const totalArticles = newsletter?.sections.reduce((acc, s) => acc + s.items.length, 0) ?? 0;
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="grid min-h-screen lg:grid-cols-[minmax(340px,400px)_minmax(0,1fr)] max-lg:grid-cols-1">
@@ -369,12 +364,10 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
           <DotPattern className="text-slate-200/50 dark:text-slate-700/30" width={20} height={20} cr={1} />
 
           <div className="relative flex items-center gap-3">
-            <div className="inline-grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 text-white shadow-lg shadow-brand-500/20">
-              <Newspaper size={22} />
-            </div>
+            <Logo size={40} />
             <div>
-              <h1 className="text-lg font-bold">
-                <AnimatedGradientText>Admin Dashboard</AnimatedGradientText>
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white">
+                Admin Dashboard
               </h1>
               <p className="text-xs text-slate-500 dark:text-slate-400">Pipeline & topic management</p>
             </div>
@@ -476,7 +469,7 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
               <button
                 onClick={handleSendNewsletter}
                 disabled={!adminKey.trim()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition hover:shadow-brand-500/40 disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
               >
                 <Send size={15} />
                 Send to mailing list
@@ -507,15 +500,6 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                 activeTab === "pipeline" ? "bg-brand-600 text-white shadow-sm shadow-brand-600/20" : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800")}
             >
               Pipeline
-            </button>
-            <button
-              onClick={() => setActiveTab("newsletter")}
-              className={cn("rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all",
-                activeTab === "newsletter" ? "bg-brand-600 text-white shadow-sm shadow-brand-600/20" : "text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800")}
-              disabled={!newsletter}
-            >
-              Newsletter
-              {newsletter && <span className="ml-1.5 rounded-full bg-white/20 px-1.5 text-xs">{totalArticles}</span>}
             </button>
             <button
               onClick={() => setActiveTab("configs")}
@@ -569,16 +553,16 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                 <div className="mb-5 flex gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/50">
                   {([
                     { id: "generate", label: "Generate", icon: Play },
-                    { id: "topics", label: "Topics", icon: FolderPlus },
                     { id: "subscribers", label: "Mailing", icon: Users },
+                    { id: "questions", label: "Questions", icon: HelpCircle },
                     { id: "history", label: "History", icon: History },
                   ] as const).map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => {
                         setSidebarTab(tab.id);
-                        if (tab.id === "topics") refreshTopics();
-                        if (tab.id === "subscribers") { refreshSubscribers(); refreshGroups(); }
+                        if (tab.id === "subscribers") { refreshSubscribers(); refreshGroups(); refreshHistory(); }
+                        if (tab.id === "questions") refreshQuestions();
                         if (tab.id === "history") refreshHistory();
                       }}
                       className={cn(
@@ -706,43 +690,6 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                   </form>
                 )}
 
-                {sidebarTab === "topics" && (
-                  <div className="flex flex-col gap-4">
-                    <div>
-                      <h3 className="text-base font-bold text-slate-700 dark:text-slate-200">Topic Management</h3>
-                      <p className="text-sm text-slate-400 mt-0.5">Saved presets for quick newsletter generation</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <input className="input-field flex-1" type="text" value={newTopicTitle}
-                        onChange={(e) => setNewTopicTitle(e.target.value)} placeholder="New topic title…"
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreateTopic(); } }} />
-                      <button onClick={handleCreateTopic} className="rounded-lg bg-brand-600 p-2.5 text-white transition hover:bg-brand-700">
-                        <Plus size={16} />
-                      </button>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      {topics.map((t) => (
-                        <div key={t.topic_id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                          <button onClick={() => { setTheme(t.title); setSidebarTab("generate"); }}
-                            className="flex-1 text-left transition hover:text-brand-600">
-                            <div className="font-medium truncate">{t.title}</div>
-                            <div className="text-xs text-slate-400">{formatDate(t.created_at)}</div>
-                          </button>
-                          <button onClick={() => handleDeleteTopic(t.topic_id)} className="text-slate-300 transition hover:text-red-500">
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      ))}
-                      {topics.length === 0 && (
-                        <div className="flex flex-col items-center gap-2 py-12 text-center">
-                          <FolderPlus size={32} className="text-slate-300 dark:text-slate-600" />
-                          <p className="text-sm text-slate-400">No topics created yet.<br />Add one above to get started.</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
                 {sidebarTab === "subscribers" && (
                   <div className="flex flex-col gap-4">
                     <div>
@@ -835,47 +782,56 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                     </div>
 
                     {/* Send to groups */}
-                    {newsletter && runId && (
-                      <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
-                        {groups.length > 0 ? (
-                          <div className="flex flex-col gap-1.5">
-                            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Select groups to send to</div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {groups.map((g) => (
-                                <button key={g.group_id}
-                                  onClick={() => handleToggleSendGroup(g.group_id)}
-                                  className={cn(
-                                    "rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                                    selectedGroupIds.has(g.group_id)
-                                      ? "bg-brand-600 text-white shadow-sm"
-                                      : "bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400"
-                                  )}
-                                >
-                                  {g.name} ({g.subscriber_count})
-                                </button>
-                              ))}
-                            </div>
-                            <p className="text-xs text-slate-400">
-                              {selectedGroupIds.size > 0
-                                ? `Will send to ${selectedGroupIds.size} group(s). Subscribers in any selected group will receive the newsletter.`
-                                : "Select at least one group to send the newsletter."}
-                            </p>
+                    <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Send newsletter</div>
+                      <select className="input-field" value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)}>
+                        <option value="">— Select a newsletter —</option>
+                        {history.filter(h => h.status === "done" || h.status === "partial").map(h => (
+                          <option key={h.run_id} value={h.run_id}>
+                            {h.config?.theme || "Untitled"} — {formatDate(h.created_at)}
+                          </option>
+                        ))}
+                      </select>
+
+                      {groups.length > 0 ? (
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Select groups to send to</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {groups.map((g) => (
+                              <button key={g.group_id}
+                                onClick={() => handleToggleSendGroup(g.group_id)}
+                                className={cn(
+                                  "rounded-lg px-3 py-1.5 text-xs font-medium transition",
+                                  selectedGroupIds.has(g.group_id)
+                                    ? "bg-brand-600 text-white shadow-sm"
+                                    : "bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400"
+                                )}
+                              >
+                                {g.name} ({g.subscriber_count})
+                              </button>
+                            ))}
                           </div>
-                        ) : (
-                          <p className="text-xs text-slate-400">Create a group and assign subscribers to it before sending.</p>
-                        )}
-                        <button onClick={handleSendNewsletter} disabled={!adminKey.trim() || selectedGroupIds.size === 0}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition hover:shadow-brand-500/40 disabled:opacity-50">
-                          <Send size={15} />
-                          {selectedGroupIds.size > 0 ? `Send to ${selectedGroupIds.size} group(s)` : "Select groups first"}
-                        </button>
-                        {sendStatus && (
-                          <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
-                            {sendStatus}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          <p className="text-xs text-slate-400">
+                            {selectedGroupIds.size > 0
+                              ? `Will send to ${selectedGroupIds.size} group(s). Subscribers in any selected group will receive the newsletter.`
+                              : "Select at least one group to send the newsletter."}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400">Create a group and assign subscribers to it before sending.</p>
+                      )}
+                      <button onClick={handleSendNewsletter} disabled={!adminKey.trim() || selectedGroupIds.size === 0 || !selectedRunId}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+                      >
+                        <Send size={15} />
+                        {selectedGroupIds.size > 0 && selectedRunId ? `Send to ${selectedGroupIds.size} group(s)` : "Select newsletter and groups"}
+                      </button>
+                      {sendStatus && (
+                        <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
+                          {sendStatus}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -912,15 +868,87 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                     </div>
                   </div>
                 )}
+
+                {sidebarTab === "questions" && (
+                  <div className="flex flex-col gap-4">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-700 dark:text-slate-200">Registration Questions</h3>
+                      <p className="text-sm text-slate-400 mt-0.5">Questions shown to new users during account creation. Each option maps to a group.</p>
+                    </div>
+
+                    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                      <div>
+                        <label className="label-text">Question text</label>
+                        <input className="input-field" type="text" value={newQuestionText}
+                          onChange={(e) => setNewQuestionText(e.target.value)}
+                          placeholder="e.g. What industry are you most interested in?" />
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="label-text">Answer options (each maps to a group)</label>
+                        {newQuestionOptions.map((opt, i) => (
+                          <div key={i} className="flex gap-2">
+                            <input className="input-field flex-1" type="text" value={opt.text}
+                              onChange={(e) => setNewQuestionOptions(prev => prev.map((o, j) => j === i ? { ...o, text: e.target.value } : o))}
+                              placeholder={`Option ${i + 1} text`} />
+                            <input className="input-field w-32" type="text" value={opt.group_name}
+                              onChange={(e) => setNewQuestionOptions(prev => prev.map((o, j) => j === i ? { ...o, group_name: e.target.value } : o))}
+                              placeholder="Group name" />
+                            {newQuestionOptions.length > 2 && (
+                              <button onClick={() => setNewQuestionOptions(prev => prev.filter((_, j) => j !== i))}
+                                className="text-slate-300 transition hover:text-red-500">
+                                <X size={16} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <button onClick={() => setNewQuestionOptions(prev => [...prev, { text: "", group_name: "" }])}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 transition hover:text-brand-700">
+                          <Plus size={14} /> Add option
+                        </button>
+                      </div>
+                      <button onClick={handleCreateQuestion} disabled={!newQuestionText.trim() || !adminKey.trim()}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50">
+                        <Plus size={15} /> Create question
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      {questions.length === 0 ? (
+                        <div className="flex flex-col items-center gap-2 py-12 text-center">
+                          <HelpCircle size={32} className="text-slate-300 dark:text-slate-600" />
+                          <p className="text-sm text-slate-400">No questions yet.<br />Create one above to set up the registration flow.</p>
+                        </div>
+                      ) : (
+                        questions.map((q, qi) => (
+                          <div key={q.question_id} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1">
+                                <div className="font-medium text-sm text-slate-700 dark:text-slate-200">{qi + 1}. {q.text}</div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {q.options.map((opt) => (
+                                    <span key={opt.option_id} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                      {opt.text} → <span className="font-medium text-brand-600 dark:text-brand-400">{opt.group_name}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <button onClick={() => handleDeleteQuestion(q.question_id)} className="text-slate-300 transition hover:text-red-500">
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : newsletter ? (
-              <NewsletterView newsletter={newsletter} runId={runId ?? ""} onBookmark={handleBookmark} bookmarkedIds={bookmarkedIds} />
             ) : (
               <div className="grid place-items-center py-20 text-center">
                 <div className="flex flex-col items-center gap-3 text-slate-400">
                   <Newspaper size={32} />
-                  <h2 className="text-lg font-bold text-slate-500 dark:text-slate-300">Your newsletter will appear here</h2>
-                  <p className="max-w-xs text-sm">The pipeline is working. Once the composer finishes, your curated newsletter will show up in this view.</p>
+                  <h2 className="text-lg font-bold text-slate-500 dark:text-slate-300">No configuration selected</h2>
+                  <p className="max-w-xs text-sm">Use the Configs tab to generate a new newsletter.</p>
                 </div>
               </div>
             )}

@@ -44,18 +44,22 @@ SYSTEM = (
     "You are a strict news curator. You judge only the text provided. "
     "You never add information that is not in the text. "
     "When a target audience is specified, you must factor how relevant "
-    "and useful each article is for that audience into your relevance score."
+    "and useful each article is for that audience into your relevance score. "
+    "Be demanding: if an article only tangentially mentions the theme but "
+    "is really about something else, give it a low relevance score (below 0.3). "
+    "Prefer articles with concrete, specific developments over generic commentary."
 )
 
 RUBRIC = (
     "Score each item from 0.0 to 1.0 on three independent axes:\n"
-    "- relevance: does it actually address the theme and angle? If a target "
+    "- relevance: does it directly address the theme and angle? If a target "
     "audience is specified, also factor how useful and actionable this is for "
-    "that audience.\n"
+    "that audience. Score below 0.3 for tangential mentions.\n"
     "- valence: is the OUTCOME described constructive (progress, solutions, "
     "recovery, wins)? 0.0 = purely bad news, 0.5 = neutral, 1.0 = clearly good.\n"
     "- signal: is it substantive journalism (specific, sourced, verifiable, "
-    "low hype)? Penalise clickbait, listicles, rage-bait, press-release fluff."
+    "low hype)? Penalise clickbait, listicles, rage-bait, press-release fluff. "
+    "Prefer articles with data, quotes, or specific outcomes."
 )
 
 
@@ -145,6 +149,32 @@ async def curator_node(
             ],
         }
 
+    # Cross-subtopic deduplication: remove articles with the same URL
+    seen_urls: set[str] = set()
+    deduped: list[RawArticle] = []
+    dup_count = 0
+    for a in articles:
+        if a.url in seen_urls:
+            dup_count += 1
+            continue
+        seen_urls.add(a.url)
+        deduped.append(a)
+    articles = deduped
+
+    # Source diversity: cap at max 3 articles per domain to ensure variety
+    domain_counts: dict[str, int] = {}
+    MAX_PER_DOMAIN = 3
+    diverse: list[RawArticle] = []
+    domain_filtered = 0
+    for a in articles:
+        cnt = domain_counts.get(a.domain, 0)
+        if cnt >= MAX_PER_DOMAIN:
+            domain_filtered += 1
+            continue
+        domain_counts[a.domain] = cnt + 1
+        diverse.append(a)
+    articles = diverse
+
     batches = [articles[i : i + BATCH_SIZE] for i in range(0, len(articles), BATCH_SIZE)]
     results = await asyncio.gather(
         *(_score_batch(provider, config, subtopic_by_id, batch) for batch in batches),
@@ -172,8 +202,9 @@ async def curator_node(
         judged = llm_scores.get(article.id)
         reasons: list[str] = []
         if judged is not None:
-            # Blend: heuristics anchor, LLM adjusts. Avoids one bad call dominating.
-            heuristic.relevance = round(0.4 * heuristic.relevance + 0.6 * judged.relevance, 3)
+            # Blend: heuristics anchor, LLM adjusts. 50/50 for relevance since
+            # heuristic scoring is now more precise with theme-specificity checks.
+            heuristic.relevance = round(0.5 * heuristic.relevance + 0.5 * judged.relevance, 3)
             heuristic.goodness_valence = round(
                 0.4 * heuristic.goodness_valence + 0.6 * judged.valence, 3
             )

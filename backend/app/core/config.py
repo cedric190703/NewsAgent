@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     results_per_subtopic: int = 20
     min_relevant_results: int = 2
     max_search_attempts: int = 2
-    relevance_threshold: float = 0.25
+    relevance_threshold: float = 0.30
     enable_factcheck: bool = True
 
     # --- storage ---
