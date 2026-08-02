@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     admin_password: str = "admin123"
 
     # --- email / mailing list ---
+    # SMTP (optional — used if resend_api_key is not set)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -84,6 +85,8 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_from_name: str = "Good News Agent"
     smtp_use_tls: bool = True
+    # Resend API (preferred — set RESEND_API_KEY to use instead of SMTP)
+    resend_api_key: str = ""
 
     # --- fetching / extraction ---
     source_fetch_timeout_seconds: int = 15

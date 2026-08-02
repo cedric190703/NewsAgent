@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
     env_file:
-      - ./backend/.env.example
+      - ./backend/.env
     environment:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: mistral:latest
