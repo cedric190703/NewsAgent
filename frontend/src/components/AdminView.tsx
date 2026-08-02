@@ -53,10 +53,16 @@ import {
   addSubscriber,
   deleteSubscriber,
   sendNewsletter,
+  listGroups,
+  createGroup,
+  deleteGroup,
+  addSubscriberToGroup,
+  removeSubscriberFromGroup,
   removeBookmark,
   streamRunEvents,
   type RunHistoryItem,
   type Subscriber,
+  type Group,
 } from "../services/api";
 import { PipelineView } from "./PipelineView";
 import { NewsletterView } from "./NewsletterView";
@@ -117,8 +123,12 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [newTopicTitle, setNewTopicTitle] = useState("");
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [newSubEmail, setNewSubEmail] = useState("");
   const [newSubName, setNewSubName] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupDesc, setNewGroupDesc] = useState("");
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"generate" | "topics" | "subscribers" | "history">("generate");
 
@@ -145,6 +155,10 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
 
   const refreshSubscribers = useCallback(() => {
     listSubscribers().then(setSubscribers).catch(() => {});
+  }, []);
+
+  const refreshGroups = useCallback(() => {
+    listGroups().then(setGroups).catch(() => {});
   }, []);
 
   const handleBookmark = useCallback(
@@ -272,11 +286,53 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
     try { await deleteSubscriber(id, adminKey); refreshSubscribers(); } catch { /* ignore */ }
   };
 
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim() || !adminKey.trim()) return;
+    try {
+      await createGroup(newGroupName.trim(), newGroupDesc.trim(), adminKey);
+      setNewGroupName("");
+      setNewGroupDesc("");
+      refreshGroups();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create group");
+    }
+  };
+
+  const handleDeleteGroup = async (id: string) => {
+    try { await deleteGroup(id, adminKey); refreshGroups(); refreshSubscribers(); } catch { /* ignore */ }
+  };
+
+  const handleToggleSubscriberGroup = async (subscriberId: string, groupId: string) => {
+    const sub = subscribers.find(s => s.subscriber_id === subscriberId);
+    const isInGroup = sub?.groups?.some(g => g.group_id === groupId);
+    try {
+      if (isInGroup) {
+        await removeSubscriberFromGroup(subscriberId, groupId, adminKey);
+      } else {
+        await addSubscriberToGroup(subscriberId, groupId, adminKey);
+      }
+      refreshSubscribers();
+      refreshGroups();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update group membership");
+    }
+  };
+
+  const handleToggleSendGroup = (groupId: string) => {
+    setSelectedGroupIds(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
   const handleSendNewsletter = async () => {
     if (!runId || !adminKey.trim()) return;
     setSendStatus("Sending…");
     try {
-      const result = await sendNewsletter(runId, adminKey);
+      const groupIds = selectedGroupIds.size > 0 ? Array.from(selectedGroupIds) : undefined;
+      const result = await sendNewsletter(runId, adminKey, groupIds);
       setSendStatus(result.detail);
     } catch (err) {
       setSendStatus(err instanceof Error ? err.message : "Failed to send");
@@ -522,7 +578,7 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                       onClick={() => {
                         setSidebarTab(tab.id);
                         if (tab.id === "topics") refreshTopics();
-                        if (tab.id === "subscribers") refreshSubscribers();
+                        if (tab.id === "subscribers") { refreshSubscribers(); refreshGroups(); }
                         if (tab.id === "history") refreshHistory();
                       }}
                       className={cn(
@@ -691,8 +747,38 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                   <div className="flex flex-col gap-4">
                     <div>
                       <h3 className="text-base font-bold text-slate-700 dark:text-slate-200">Mailing List</h3>
-                      <p className="text-sm text-slate-400 mt-0.5">{subscribers.length} subscriber(s) on the list</p>
+                      <p className="text-sm text-slate-400 mt-0.5">{subscribers.length} subscriber(s) · {groups.length} group(s)</p>
                     </div>
+
+                    {/* Groups section */}
+                    <div className="flex flex-col gap-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-900/50">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Groups</div>
+                      <div className="flex gap-2">
+                        <input className="input-field flex-1" type="text" value={newGroupName}
+                          onChange={(e) => setNewGroupName(e.target.value)} placeholder="Group name (e.g. Group A)" />
+                        <button onClick={handleCreateGroup} className="rounded-lg bg-brand-600 p-2.5 text-white transition hover:bg-brand-700">
+                          <Plus size={16} />
+                        </button>
+                      </div>
+                      <input className="input-field" type="text" value={newGroupDesc}
+                        onChange={(e) => setNewGroupDesc(e.target.value)} placeholder="Description (optional)" />
+                      <div className="flex flex-wrap gap-1.5">
+                        {groups.map((g) => (
+                          <div key={g.group_id} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs dark:border-slate-700 dark:bg-slate-800">
+                            <span className="font-medium">{g.name}</span>
+                            <span className="text-slate-400">({g.subscriber_count})</span>
+                            <button onClick={() => handleDeleteGroup(g.group_id)} className="text-slate-300 transition hover:text-red-500">
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                        {groups.length === 0 && (
+                          <span className="text-xs text-slate-400">No groups yet.</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Add subscriber */}
                     <div className="flex flex-col gap-2">
                       <input className="input-field" type="email" value={newSubEmail}
                         onChange={(e) => setNewSubEmail(e.target.value)} placeholder="subscriber@email.com" />
@@ -704,16 +790,40 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                         </button>
                       </div>
                     </div>
+
+                    {/* Subscriber list with group badges */}
                     <div className="flex flex-col gap-2">
                       {subscribers.map((s) => (
-                        <div key={s.subscriber_id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                          <div className="flex-1 truncate">
-                            <div className="font-medium truncate">{s.email}</div>
-                            {s.name && <div className="text-xs text-slate-400">{s.name}</div>}
+                        <div key={s.subscriber_id} className="flex flex-col gap-1.5 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 truncate">
+                              <div className="font-medium truncate">{s.email}</div>
+                              {s.name && <div className="text-xs text-slate-400">{s.name}</div>}
+                            </div>
+                            <button onClick={() => handleDeleteSubscriber(s.subscriber_id)} className="text-slate-300 transition hover:text-red-500">
+                              <Trash2 size={15} />
+                            </button>
                           </div>
-                          <button onClick={() => handleDeleteSubscriber(s.subscriber_id)} className="text-slate-300 transition hover:text-red-500">
-                            <Trash2 size={15} />
-                          </button>
+                          {groups.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {groups.map((g) => {
+                                const inGroup = s.groups?.some(sg => sg.group_id === g.group_id);
+                                return (
+                                  <button key={g.group_id}
+                                    onClick={() => handleToggleSubscriberGroup(s.subscriber_id, g.group_id)}
+                                    className={cn(
+                                      "rounded-md px-2 py-0.5 text-[10px] font-medium transition",
+                                      inGroup
+                                        ? "bg-brand-600 text-white"
+                                        : "bg-slate-100 text-slate-400 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-500"
+                                    )}
+                                  >
+                                    {g.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       ))}
                       {subscribers.length === 0 && (
@@ -723,12 +833,39 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                         </div>
                       )}
                     </div>
+
+                    {/* Send to groups */}
                     {newsletter && runId && (
                       <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
+                        {groups.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Send to groups (optional)</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {groups.map((g) => (
+                                <button key={g.group_id}
+                                  onClick={() => handleToggleSendGroup(g.group_id)}
+                                  className={cn(
+                                    "rounded-lg px-3 py-1.5 text-xs font-medium transition",
+                                    selectedGroupIds.has(g.group_id)
+                                      ? "bg-brand-600 text-white shadow-sm"
+                                      : "bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400"
+                                  )}
+                                >
+                                  {g.name} ({g.subscriber_count})
+                                </button>
+                              ))}
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              {selectedGroupIds.size > 0
+                                ? `Will send to ${selectedGroupIds.size} group(s). Subscribers in any selected group will receive the newsletter.`
+                                : "No groups selected — will send to all subscribers."}
+                            </p>
+                          </div>
+                        )}
                         <button onClick={handleSendNewsletter} disabled={!adminKey.trim()}
                           className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition hover:shadow-brand-500/40 disabled:opacity-50">
                           <Send size={15} />
-                          Send newsletter to list
+                          {selectedGroupIds.size > 0 ? `Send to ${selectedGroupIds.size} group(s)` : "Send to all subscribers"}
                         </button>
                         {sendStatus && (
                           <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900/50 dark:text-slate-300">

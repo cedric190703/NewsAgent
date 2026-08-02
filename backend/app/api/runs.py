@@ -274,7 +274,7 @@ async def add_subscriber(
 
 @router.get("/subscribers")
 async def list_subscribers() -> list[dict[str, Any]]:
-    return await store.list_subscribers()
+    return await store.list_subscribers_with_groups()
 
 
 @router.delete("/subscribers/{subscriber_id}")
@@ -295,9 +295,65 @@ async def delete_subscriber(
 @router.post("/runs/{run_id}/send")
 async def send_newsletter(
     run_id: str,
+    group_ids: str | None = Query(default=None),
     x_admin_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _check_admin(x_admin_key)
     from app.services.mailer import send_newsletter as _send
-    result = await _send(run_id)
+    ids = group_ids.split(",") if group_ids else []
+    result = await _send(run_id, ids or None)
     return result
+
+
+# --- groups (admin) ---
+
+
+@router.post("/groups")
+async def create_group(
+    name: str,
+    description: str = "",
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    group_id = uuid4().hex[:12]
+    await store.create_group(group_id, name, description)
+    return {"group_id": group_id, "status": "created"}
+
+
+@router.get("/groups")
+async def list_groups() -> list[dict[str, Any]]:
+    return await store.list_groups()
+
+
+@router.delete("/groups/{group_id}")
+async def delete_group(
+    group_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    deleted = await store.delete_group(group_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"status": "deleted"}
+
+
+@router.post("/subscribers/{subscriber_id}/groups/{group_id}")
+async def add_to_group(
+    subscriber_id: str,
+    group_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    await store.add_subscriber_to_group(subscriber_id, group_id)
+    return {"status": "added"}
+
+
+@router.delete("/subscribers/{subscriber_id}/groups/{group_id}")
+async def remove_from_group(
+    subscriber_id: str,
+    group_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    await store.remove_subscriber_from_group(subscriber_id, group_id)
+    return {"status": "removed"}

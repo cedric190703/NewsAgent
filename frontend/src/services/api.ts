@@ -244,11 +244,25 @@ export async function listNewsletters(): Promise<NewsletterListItem[]> {
   return getJSON("/api/newsletters");
 }
 
+export interface SubscriberGroup {
+  group_id: string;
+  name: string;
+}
+
 export interface Subscriber {
   subscriber_id: string;
   email: string;
   name: string;
   created_at: string;
+  groups?: SubscriberGroup[];
+}
+
+export interface Group {
+  group_id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  subscriber_count: number;
 }
 
 export async function listSubscribers(): Promise<Subscriber[]> {
@@ -274,13 +288,55 @@ export async function deleteSubscriber(subscriberId: string, adminKey: string): 
   if (!res.ok) throw new Error(await res.text());
 }
 
-export async function sendNewsletter(runId: string, adminKey: string): Promise<{ sent: number; failed: number; detail: string }> {
-  const res = await fetch(`${API_BASE}/api/runs/${runId}/send`, {
+export async function sendNewsletter(runId: string, adminKey: string, groupIds?: string[]): Promise<{ sent: number; failed: number; detail: string }> {
+  const params = new URLSearchParams();
+  if (groupIds && groupIds.length > 0) params.set("group_ids", groupIds.join(","));
+  const qs = params.toString() ? `?${params}` : "";
+  const res = await fetch(`${API_BASE}/api/runs/${runId}/send${qs}`, {
     method: "POST",
     headers: { "X-Admin-Key": adminKey },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export async function listGroups(): Promise<Group[]> {
+  return getJSON("/api/groups");
+}
+
+export async function createGroup(name: string, description: string, adminKey: string): Promise<{ group_id: string }> {
+  const params = new URLSearchParams({ name });
+  if (description) params.set("description", description);
+  const res = await fetch(`${API_BASE}/api/groups?${params}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteGroup(groupId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/groups/${groupId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function addSubscriberToGroup(subscriberId: string, groupId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/subscribers/${subscriberId}/groups/${groupId}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function removeSubscriberFromGroup(subscriberId: string, groupId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/subscribers/${subscriberId}/groups/${groupId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
 }
 
 export async function listRuns(): Promise<RunHistoryItem[]> {

@@ -40,6 +40,21 @@ CREATE TABLE IF NOT EXISTS subscribers (
     created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS groups (
+    group_id    TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subscriber_groups (
+    subscriber_id TEXT NOT NULL,
+    group_id      TEXT NOT NULL,
+    PRIMARY KEY (subscriber_id, group_id),
+    FOREIGN KEY (subscriber_id) REFERENCES subscribers(subscriber_id) ON DELETE CASCADE,
+    FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS bookmarks (
     run_id      TEXT NOT NULL,
     article_id  TEXT NOT NULL,
@@ -398,5 +413,135 @@ async def get_subscriber_emails() -> list[str]:
         cursor = await db.execute("SELECT email FROM subscribers")
         rows = await cursor.fetchall()
         return [row["email"] for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_subscriber_emails_by_groups(group_ids: list[str]) -> list[str]:
+    """Return emails of subscribers belonging to any of the given groups."""
+    if not group_ids:
+        return []
+    placeholders = ",".join("?" * len(group_ids))
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            f"SELECT DISTINCT s.email FROM subscribers s "
+            f"JOIN subscriber_groups sg ON s.subscriber_id = sg.subscriber_id "
+            f"WHERE sg.group_id IN ({placeholders})",
+            group_ids,
+        )
+        rows = await cursor.fetchall()
+        return [row["email"] for row in rows]
+    finally:
+        await db.close()
+
+
+# --- groups ---
+
+
+async def create_group(group_id: str, name: str, description: str = "") -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            "INSERT OR REPLACE INTO groups (group_id, name, description, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (group_id, name, description, _now()),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_groups() -> list[dict[str, Any]]:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT g.group_id, g.name, g.description, g.created_at, "
+            "COUNT(sg.subscriber_id) AS subscriber_count "
+            "FROM groups g "
+            "LEFT JOIN subscriber_groups sg ON g.group_id = sg.group_id "
+            "GROUP BY g.group_id ORDER BY g.created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def delete_group(group_id: str) -> bool:
+    db = await _connect()
+    try:
+        cursor = await db.execute("DELETE FROM groups WHERE group_id = ?", (group_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def add_subscriber_to_group(subscriber_id: str, group_id: str) -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO subscriber_groups (subscriber_id, group_id) VALUES (?, ?)",
+            (subscriber_id, group_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def remove_subscriber_from_group(subscriber_id: str, group_id: str) -> bool:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "DELETE FROM subscriber_groups WHERE subscriber_id = ? AND group_id = ?",
+            (subscriber_id, group_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_subscriber_groups(subscriber_id: str) -> list[dict[str, Any]]:
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT g.group_id, g.name FROM groups g "
+            "JOIN subscriber_groups sg ON g.group_id = sg.group_id "
+            "WHERE sg.subscriber_id = ? ORDER BY g.name",
+            (subscriber_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def list_subscribers_with_groups() -> list[dict[str, Any]]:
+    """List all subscribers with their group memberships."""
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT subscriber_id, email, name, created_at FROM subscribers ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        subscribers = [dict(row) for row in rows]
+        # Batch fetch all group memberships
+        cursor = await db.execute(
+            "SELECT sg.subscriber_id, g.group_id, g.name "
+            "FROM subscriber_groups sg JOIN groups g ON sg.group_id = g.group_id"
+        )
+        group_rows = await cursor.fetchall()
+        groups_by_sub: dict[str, list[dict[str, str]]] = {}
+        for row in group_rows:
+            sid = row["subscriber_id"]
+            groups_by_sub.setdefault(sid, []).append({
+                "group_id": row["group_id"],
+                "name": row["name"],
+            })
+        for sub in subscribers:
+            sub["groups"] = groups_by_sub.get(sub["subscriber_id"], [])
+        return subscribers
     finally:
         await db.close()

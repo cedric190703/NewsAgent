@@ -12,7 +12,7 @@ import httpx
 
 from app.core.config import settings
 from app.search.base import SearchHit, SearchQuery
-from app.search.extract import enrich_hits, html_to_text
+from app.search.extract import enrich_hits, html_to_text, _junk_ratio
 
 ATOM = "{http://www.w3.org/2005/Atom}"
 MEDIA = "{http://search.yahoo.com/mrss/}"
@@ -45,6 +45,8 @@ async def fetch_article_url(url: str, client: httpx.AsyncClient) -> SearchHit | 
             return None
         text = html_to_text(response.text)
         if not text or len(text) < 100:
+            return None
+        if len(text) > 200 and _junk_ratio(text) > 0.6:
             return None
         # Try to extract title from HTML
         title = ""

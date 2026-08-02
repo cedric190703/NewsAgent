@@ -9,20 +9,29 @@ from email.mime.text import MIMEText
 from app.core.config import settings
 from app.graph.state import Newsletter
 from app.services.exporter import to_html, to_markdown
-from app.services.store import get_subscriber_emails, get_run
+from app.services.store import get_subscriber_emails, get_subscriber_emails_by_groups, get_run
 
 
-async def send_newsletter(run_id: str) -> dict[str, int | str]:
-    """Send a completed newsletter to all subscribers via SMTP.
+async def send_newsletter(run_id: str, group_ids: list[str] | None = None) -> dict[str, int | str]:
+    """Send a completed newsletter to subscribers via SMTP.
+
+    If group_ids is provided, only sends to subscribers in those groups.
+    Otherwise sends to all subscribers.
 
     Returns {"sent": N, "failed": N, "detail": "..."}.
     """
     if not settings.smtp_host:
         return {"sent": 0, "failed": 0, "detail": "SMTP not configured — set SMTP_HOST in env"}
 
-    emails = await get_subscriber_emails()
+    if group_ids:
+        emails = await get_subscriber_emails_by_groups(group_ids)
+        target_desc = f"{len(group_ids)} group(s)"
+    else:
+        emails = await get_subscriber_emails()
+        target_desc = "all subscribers"
+
     if not emails:
-        return {"sent": 0, "failed": 0, "detail": "No subscribers in the mailing list"}
+        return {"sent": 0, "failed": 0, "detail": f"No subscribers in {target_desc}"}
 
     run = await get_run(run_id)
     if not run or not run.get("newsletter"):
