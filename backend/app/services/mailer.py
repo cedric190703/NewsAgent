@@ -133,6 +133,8 @@ async def send_newsletter(run_id: str, group_ids: list[str] | None = None) -> di
         newsletter_data = json.loads(newsletter_data)
     newsletter = Newsletter.model_validate(newsletter_data)
     config = run.get("config", {})
+    if isinstance(config, str):
+        config = json.loads(config)
     theme = config.get("theme", "Newsletter")
 
     html_body = to_html(newsletter)

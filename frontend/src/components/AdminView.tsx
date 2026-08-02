@@ -837,9 +837,9 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                     {/* Send to groups */}
                     {newsletter && runId && (
                       <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
-                        {groups.length > 0 && (
+                        {groups.length > 0 ? (
                           <div className="flex flex-col gap-1.5">
-                            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Send to groups (optional)</div>
+                            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Select groups to send to</div>
                             <div className="flex flex-wrap gap-1.5">
                               {groups.map((g) => (
                                 <button key={g.group_id}
@@ -858,14 +858,16 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                             <p className="text-xs text-slate-400">
                               {selectedGroupIds.size > 0
                                 ? `Will send to ${selectedGroupIds.size} group(s). Subscribers in any selected group will receive the newsletter.`
-                                : "No groups selected — will send to all subscribers."}
+                                : "Select at least one group to send the newsletter."}
                             </p>
                           </div>
+                        ) : (
+                          <p className="text-xs text-slate-400">Create a group and assign subscribers to it before sending.</p>
                         )}
-                        <button onClick={handleSendNewsletter} disabled={!adminKey.trim()}
+                        <button onClick={handleSendNewsletter} disabled={!adminKey.trim() || selectedGroupIds.size === 0}
                           className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/20 transition hover:shadow-brand-500/40 disabled:opacity-50">
                           <Send size={15} />
-                          {selectedGroupIds.size > 0 ? `Send to ${selectedGroupIds.size} group(s)` : "Send to all subscribers"}
+                          {selectedGroupIds.size > 0 ? `Send to ${selectedGroupIds.size} group(s)` : "Select groups first"}
                         </button>
                         {sendStatus && (
                           <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
