@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -127,7 +128,10 @@ async def send_newsletter(run_id: str, group_ids: list[str] | None = None) -> di
     if not run or not run.get("newsletter"):
         return {"sent": 0, "failed": 0, "detail": "Newsletter not found or incomplete"}
 
-    newsletter = Newsletter.model_validate(run["newsletter"])
+    newsletter_data = run["newsletter"]
+    if isinstance(newsletter_data, str):
+        newsletter_data = json.loads(newsletter_data)
+    newsletter = Newsletter.model_validate(newsletter_data)
     config = run.get("config", {})
     theme = config.get("theme", "Newsletter")
 
