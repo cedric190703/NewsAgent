@@ -24,17 +24,9 @@ function ScoreBadge({ scores }: { scores: ArticleSummary["scores"] }) {
     pct >= 75 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
     : pct >= 50 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
     : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300";
-  const tooltip = [
-    `Overall: ${Math.round(scores.composite * 100)}%`,
-    `Relevance: ${Math.round(scores.relevance * 100)}%`,
-    `Recency: ${Math.round(scores.recency * 100)}%`,
-    `Credibility: ${Math.round(scores.credibility * 100)}%`,
-    `Constructive outcome: ${Math.round(scores.goodness_valence * 100)}%`,
-    `Journalistic signal: ${Math.round(scores.goodness_signal * 100)}%`,
-  ].join("\n");
   return (
     <span className="group relative inline-flex">
-      <span className={cn("cursor-help rounded-full px-2.5 py-0.5 text-xs font-bold", color)} title={tooltip}>
+      <span className={cn("cursor-help rounded-full px-2.5 py-0.5 text-xs font-bold", color)}>
         {pct}
       </span>
       <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs text-white shadow-lg group-hover:block dark:bg-slate-800">
