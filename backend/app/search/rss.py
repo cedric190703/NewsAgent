@@ -12,63 +12,65 @@ import httpx
 
 from app.core.config import settings
 from app.search.base import SearchHit, SearchQuery
-from app.search.extract import enrich_hits, html_to_text, _junk_ratio
+from app.search.extract import enrich_hits, html_to_text, _junk_ratio, fetch_article
 
 ATOM = "{http://www.w3.org/2005/Atom}"
 MEDIA = "{http://search.yahoo.com/mrss/}"
 
 
 def dynamic_feed_urls(theme: str) -> list[str]:
-    """Generate Google News search RSS URLs based on the theme.
+    """Generate RSS search URLs from multiple free news aggregators.
 
-    These act as a free search engine — Google returns articles matching
-    the keywords, packaged as RSS.
+    Uses Google News and Bing News as free search engines — they return
+    articles matching the keywords, packaged as RSS.
     """
-    base = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
-    # Clean theme into search keywords
     keywords = theme.strip().lower()
+
+    # Google News RSS search
+    google_base = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    # Bing News RSS search
+    bing_base = "https://www.bing.com/news/search?q={q}&format=rss"
+
     urls = [
-        base.format(q=quote_plus(keywords)),
-        base.format(q=quote_plus(f"{keywords} breakthrough")),
-        base.format(q=quote_plus(f"{keywords} latest news")),
+        # Google News — exact match
+        google_base.format(q=quote_plus(keywords)),
+        # Google News — breakthrough angle
+        google_base.format(q=quote_plus(f"{keywords} breakthrough")),
+        # Google News — latest news angle
+        google_base.format(q=quote_plus(f"{keywords} latest news")),
+        # Bing News — broad match (different source pool than Google)
+        bing_base.format(q=quote_plus(keywords)),
     ]
     return urls
 
 
 async def fetch_article_url(url: str, client: httpx.AsyncClient) -> SearchHit | None:
     """Fetch a direct article URL and extract a SearchHit from the HTML."""
-    try:
-        response = await client.get(url, follow_redirects=True, headers={
-            "User-Agent": "NewsAgent/0.2 (+https://github.com/)",
-        })
-        if response.status_code != 200:
-            return None
-        text = html_to_text(response.text)
-        if not text or len(text) < 100:
-            return None
-        if len(text) > 200 and _junk_ratio(text) > 0.6:
-            return None
-        # Try to extract title from HTML
-        title = ""
-        for prefix in ("<title>", "<TITLE>"):
-            start = response.text.find(prefix)
-            if start != -1:
-                end = response.text.find("</title>" if prefix == "<title>" else "</TITLE>", start)
-                if end != -1:
-                    title = response.text[start + len(prefix):end].strip()
-                    break
-        if not title:
-            title = url[:80]
-        return SearchHit(
-            url=url,
-            title=title,
-            source_name=urlsplit(url).netloc,
-            snippet=text[:1200],
-            content=text,
-            provider="custom_url",
-        )
-    except Exception:
+    text, image = await fetch_article(client, url)
+    if not text or len(text) < 100:
         return None
+    if len(text) > 200 and _junk_ratio(text) > 0.6:
+        return None
+    # Try to extract title from HTML
+    title = ""
+    for prefix in ("<title>", "<TITLE>"):
+        start = text.find(prefix)
+        if start != -1:
+            end = text.find("</title>" if prefix == "<title>" else "</TITLE>", start)
+            if end != -1:
+                title = text[start + len(prefix):end].strip()
+                break
+    if not title:
+        title = url[:80]
+    return SearchHit(
+        url=url,
+        title=title,
+        source_name=urlsplit(url).netloc,
+        snippet=text[:1200],
+        content=text,
+        image_url=image,
+        provider="custom_url",
+    )
 
 
 class RssProvider:

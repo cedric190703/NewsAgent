@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
     # --- fetching / extraction ---
     source_fetch_timeout_seconds: int = 15
-    http_user_agent: str = "NewsAgent/0.2 (+https://example.local)"
+    http_user_agent: str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     enable_article_extraction: bool = True
     min_content_chars: int = 400
     max_article_chars: int = 16000
