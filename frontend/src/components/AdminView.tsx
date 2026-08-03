@@ -60,8 +60,8 @@ import {
   listQuestions,
   createQuestion,
   deleteQuestion,
-  batchCreateRuns,
-  type BatchRunResult,
+  batchExecuteRuns,
+  type BatchExecuteResult,
   type RunHistoryItem,
   type Subscriber,
   type Group,
@@ -293,7 +293,7 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
     setBatchLoading(true);
     setBatchStatus(null);
     try {
-      const result = await batchCreateRuns(
+      const result = await batchExecuteRuns(
         {
           audience: audience.trim() || undefined,
           tone,
@@ -306,15 +306,12 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
         adminKey,
       );
       const createdCount = result.created.length;
-      const skippedCount = result.skipped.length;
       if (createdCount > 0) {
-        setBatchStatus(`Created ${createdCount} run(s) for groups: ${result.created.map(r => r.group_name).join(", ")}`);
+        setBatchStatus(`Generating ${createdCount} newsletters in background: ${result.created.map((r: { group_name: string }) => r.group_name).join(", ")}`);
         refreshHistory();
+        refreshGroups();
       } else {
-        setBatchStatus("No runs created — all groups lack a theme.");
-      }
-      if (skippedCount > 0) {
-        setBatchStatus(prev => prev ? `${prev} (Skipped: ${result.skipped.map(s => s.name).join(", ")})` : `Skipped: ${result.skipped.map(s => s.name).join(", ")}`);
+        setBatchStatus("No runs created.");
       }
     } catch (err) {
       setBatchStatus(err instanceof Error ? err.message : "Batch generation failed");
@@ -782,9 +779,9 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                             className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-brand-600 to-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:from-brand-700 hover:to-indigo-700 disabled:opacity-50"
                           >
                             {batchLoading ? (
-                              <><Loader2 size={14} className="animate-spin" /> Generating…</>
+                              <><Loader2 size={14} className="animate-spin" /> Starting…</>
                             ) : (
-                              <><Layers size={14} /> Generate for all groups</>
+                              <><Layers size={14} /> Generate & send for all groups</>
                             )}
                           </button>
                           {batchStatus && (

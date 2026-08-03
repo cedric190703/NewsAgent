@@ -95,6 +95,131 @@ async def create_batch_runs(
     return {"created": created, "skipped": skipped}
 
 
+# Mapping of group name keywords to newsletter themes
+_GROUP_THEME_MAP = {
+    "ai": "artificial intelligence and machine learning",
+    "ml": "artificial intelligence and machine learning",
+    "biotech": "biotechnology and pharmaceutical innovation",
+    "pharma": "biotechnology and pharmaceutical innovation",
+    "energy": "renewable energy and climate technology",
+    "environment": "renewable energy and climate technology",
+    "finance": "finance banking and fintech",
+    "banking": "finance banking and fintech",
+    "tech": "technology software and startups",
+    "software": "technology software and startups",
+    "education": "education and research innovation",
+    "research": "education and research innovation",
+    "policy": "policy regulation and government",
+    "regulation": "policy regulation and government",
+    "markets": "financial markets and investing",
+    "investing": "financial markets and investing",
+    "startup": "startups venture capital and entrepreneurship",
+    "vc": "startups venture capital and entrepreneurship",
+    "marketing": "marketing growth and digital media",
+    "growth": "marketing growth and digital media",
+    "design": "design creative and UX innovation",
+    "creative": "design creative and UX innovation",
+    "product": "product management and strategy",
+    "executive": "business leadership and executive strategy",
+    "data": "data science analytics and big data",
+    "geopolitics": "global affairs and geopolitics",
+    "global affairs": "global affairs and geopolitics",
+    "asia": "Asia-Pacific business and technology news",
+    "europe": "European business and technology news",
+    "student": "education and academic research",
+    "academic": "education and academic research",
+    "consult": "consulting advisory and business strategy",
+    "advisor": "consulting advisory and business strategy",
+    "quick": "technology and business news summary",
+    "deep": "technology and business deep analysis",
+    "curated": "technology business and science curated links",
+}
+
+
+def _infer_theme(group_name: str) -> str:
+    """Infer a newsletter theme from a group name."""
+    name_lower = group_name.lower()
+    for keyword, theme in _GROUP_THEME_MAP.items():
+        if keyword in name_lower:
+            return theme
+    # Fallback: use the group name itself as the theme
+    return group_name.strip()
+
+
+@router.post("/runs/batch/execute")
+async def execute_batch_runs(
+    body: dict[str, Any],
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Create AND execute one run per group in the background.
+
+    Uses each group's theme, or infers a theme from the group name if not set.
+    Runs are executed sequentially to avoid overwhelming the LLM provider.
+    Returns immediately with the list of created run IDs.
+    """
+    _check_admin(x_admin_key)
+    groups = await store.list_groups()
+    overrides = body or {}
+
+    created: list[dict[str, Any]] = []
+
+    for g in groups:
+        theme = (g.get("theme") or "").strip()
+        if not theme:
+            theme = _infer_theme(g["name"])
+            # Update the group with the inferred theme
+            await store.create_group(
+                g["group_id"], g["name"], g.get("description", ""), theme
+            )
+
+        run_id = new_run_id()
+        config = RunConfig(
+            theme=theme,
+            audience=overrides.get("audience", ""),
+            tone=overrides.get("tone", "neutral"),
+            length=overrides.get("length", "standard"),
+            good_news_mode=overrides.get("good_news_mode", "balanced"),
+            subtopic_count=overrides.get("subtopic_count", 4),
+            max_sources=overrides.get("max_sources", 20),
+            enable_factcheck=overrides.get("enable_factcheck", True),
+        )
+        await store.save_run(run_id, config)
+        created.append({
+            "run_id": run_id,
+            "group_id": g["group_id"],
+            "group_name": g["name"],
+            "theme": theme,
+        })
+
+    # Kick off background execution for all runs sequentially
+    import asyncio as _asyncio
+
+    async def _execute_all():
+        for item in created:
+            run_id = item["run_id"]
+            try:
+                run = await store.get_run(run_id)
+                if run is None:
+                    continue
+                config = RunConfig.model_validate_json(run["config"])
+                final_newsletter = None
+                async for _node, update in stream_run(config, run_id=run_id):
+                    if (update or {}).get("newsletter") is not None:
+                        final_newsletter = update["newsletter"]
+                status = "done" if final_newsletter else "partial"
+                await store.finish_run(run_id, final_newsletter, status)
+            except Exception as exc:
+                await store.finish_run(run_id, None, "error")
+
+    _asyncio.create_task(_execute_all())
+
+    return {
+        "created": created,
+        "skipped": [],
+        "message": f"Executing {len(created)} runs in background. Check History for results.",
+    }
+
+
 @router.get("/runs/{run_id}/stream")
 async def stream_run_events(run_id: str) -> EventSourceResponse:
     """SSE endpoint: streams node events and final newsletter as they happen."""

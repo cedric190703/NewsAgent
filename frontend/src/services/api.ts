@@ -339,6 +339,25 @@ export async function batchCreateRuns(
   return res.json();
 }
 
+export interface BatchExecuteResult {
+  created: { run_id: string; group_id: string; group_name: string; theme: string }[];
+  skipped: { group_id: string; name: string; reason: string }[];
+  message: string;
+}
+
+export async function batchExecuteRuns(
+  overrides: { audience?: string; tone?: string; length?: string; good_news_mode?: string; subtopic_count?: number; max_sources?: number; enable_factcheck?: boolean },
+  adminKey: string,
+): Promise<BatchExecuteResult> {
+  const res = await fetch(`${API_BASE}/api/runs/batch/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify(overrides),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function deleteGroup(groupId: string, adminKey: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/groups/${groupId}`, {
     method: "DELETE",
