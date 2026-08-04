@@ -13,11 +13,24 @@ import {
 
 import { UserView } from "./components/UserView";
 import { AdminView } from "./components/AdminView";
+import { UnsubscribeView } from "./components/UnsubscribeView";
 import { verifyAdminKey } from "./services/api";
 
 type AuthState = "user" | "login" | "admin";
 
+function useHashRoute() {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+  return hash;
+}
+
 export function App() {
+  const hash = useHashRoute();
+
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem("dark-mode");
     return saved === "true" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -53,6 +66,11 @@ export function App() {
     localStorage.removeItem("admin-authed");
     setAuthState("user");
   };
+
+  // Unsubscribe page — accessible via /#/unsubscribe?email=...
+  if (hash.startsWith("#/unsubscribe")) {
+    return <UnsubscribeView />;
+  }
 
   if (authState === "admin") {
     return (

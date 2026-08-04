@@ -40,6 +40,7 @@ async def _send_via_resend(
 
     async with httpx.AsyncClient(timeout=30) as client:
         for email in emails:
+            personalized_html = html_body.replace("RECIPIENT_EMAIL_PLACEHOLDER", email)
             try:
                 resp = await client.post(
                     RESEND_API_URL,
@@ -51,7 +52,7 @@ async def _send_via_resend(
                         "from": from_header,
                         "to": [email],
                         "subject": subject,
-                        "html": html_body,
+                        "html": personalized_html,
                         "text": text_body,
                     },
                 )
@@ -86,12 +87,13 @@ async def _send_via_smtp(
             server.login(settings.smtp_username, settings.smtp_password)
 
         for email in emails:
+            personalized_html = html_body.replace("RECIPIENT_EMAIL_PLACEHOLDER", email)
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
             msg["To"] = email
             msg.attach(MIMEText(text_body, "plain"))
-            msg.attach(MIMEText(html_body, "html"))
+            msg.attach(MIMEText(personalized_html, "html"))
             try:
                 server.sendmail(settings.smtp_from_email, [email], msg.as_string())
                 sent += 1
@@ -205,6 +207,10 @@ def _combine_newsletters_html(items: list[tuple[str, Newsletter]]) -> str:
     for g, nl in items
 )}
 <section class="sources"><h3>Sources</h3><ul>{sources_html}</ul></section>
+<p style="margin-top:2rem;padding-top:1rem;border-top:1px solid #e2e8f0;font-size:0.75rem;color:#94a3b8;">
+  You're receiving this because you subscribed to Good News Agent.
+  <br><a href="{esc(settings.cors_origins[0] if settings.cors_origins else '')}/#/unsubscribe?email={esc('RECIPIENT_EMAIL_PLACEHOLDER')}" style="color:#6366f1;">Unsubscribe</a>
+</p>
 </body></html>"""
 
 

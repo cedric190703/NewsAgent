@@ -250,7 +250,7 @@ function NewsletterReader({ item, onBack }: { item: NewsletterListItem; onBack: 
   );
 }
 
-function RegistrationModal({ onClose, onRegistered }: { onClose: () => void; onRegistered: (email: string, groups: string[]) => void }) {
+function RegistrationModal({ onClose, onRegistered }: { onClose: () => void; onRegistered: (email: string, groups: string[], token: string) => void }) {
   const [step, setStep] = useState<"intro" | "form" | "questions" | "review" | "result">("intro");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -259,6 +259,7 @@ function RegistrationModal({ onClose, onRegistered }: { onClose: () => void; onR
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [assignedGroups, setAssignedGroups] = useState<string[]>([]);
+  const [authToken, setAuthToken] = useState("");
 
   const steps = ["Welcome", "Details", "Profile", "Review", "Done"] as const;
   const stepIndex = { intro: 0, form: 1, questions: 2, review: 3, result: 4 }[step];
@@ -320,6 +321,7 @@ function RegistrationModal({ onClose, onRegistered }: { onClose: () => void; onR
       }));
       const result = await registerSubscriber(email.trim(), name.trim(), answerList);
       setAssignedGroups(result.assigned_groups);
+      setAuthToken(result.token);
       setStep("result");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
@@ -584,7 +586,7 @@ function RegistrationModal({ onClose, onRegistered }: { onClose: () => void; onR
               </div>
               <p className="text-xs text-slate-400">You'll receive one combined newsletter with content from all your groups. Sign in anytime with your email to view them.</p>
               <button
-                onClick={() => onRegistered(email.trim(), assignedGroups)}
+                onClick={() => onRegistered(email.trim(), assignedGroups, authToken)}
                 className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
               >
                 View my newsletters
@@ -662,20 +664,21 @@ export function UserView({ dark, onToggleDark }: { dark: boolean; onToggleDark: 
   const [selected, setSelected] = useState<NewsletterListItem | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(() => localStorage.getItem("user-email"));
+  const [userToken, setUserToken] = useState<string | null>(() => localStorage.getItem("user-token"));
   const [emailInput, setEmailInput] = useState("");
   const [showRegistration, setShowRegistration] = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
   const [previewNewsletters, setPreviewNewsletters] = useState<NewsletterListItem[]>([]);
 
   const refresh = useCallback(() => {
-    if (!userEmail) { setNewsletters([]); setLoading(false); return; }
+    if (!userToken && !userEmail) { setNewsletters([]); setLoading(false); return; }
     setLoading(true);
-    listMyNewsletters(userEmail)
+    listMyNewsletters(userToken || "", userEmail || undefined)
       .then(setNewsletters)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [userEmail]);
+  }, [userToken, userEmail]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -687,13 +690,17 @@ export function UserView({ dark, onToggleDark }: { dark: boolean; onToggleDark: 
     e.preventDefault();
     if (emailInput.trim()) {
       setUserEmail(emailInput.trim());
+      localStorage.setItem("user-email", emailInput.trim());
       setShowSignIn(false);
     }
   };
 
   const handleSignOut = () => {
     setUserEmail(null);
+    setUserToken(null);
     setEmailInput("");
+    localStorage.removeItem("user-email");
+    localStorage.removeItem("user-token");
   };
 
   const filtered = newsletters.filter((n) =>
@@ -967,9 +974,12 @@ export function UserView({ dark, onToggleDark }: { dark: boolean; onToggleDark: 
         {showRegistration && (
           <RegistrationModal
             onClose={() => setShowRegistration(false)}
-            onRegistered={(email) => {
+            onRegistered={(email, _groups, token) => {
               setShowRegistration(false);
               setUserEmail(email);
+              setUserToken(token);
+              localStorage.setItem("user-email", email);
+              localStorage.setItem("user-token", token);
               setEmailInput("");
             }}
           />

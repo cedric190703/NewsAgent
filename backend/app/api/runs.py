@@ -454,7 +454,26 @@ async def list_newsletters(limit: int = Query(default=50, ge=1, le=200)) -> list
 
 
 @router.get("/newsletters/mine")
-async def list_my_newsletters(email: str = Query(...), limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+async def list_my_newsletters(
+    token: str = Query(default=""),
+    email: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[dict[str, Any]]:
+    """Return newsletters for a subscriber.
+
+    Accepts a subscriber token (preferred) or an email (legacy fallback).
+    """
+    subscriber = None
+    if token:
+        subscriber = await store.get_subscriber_by_token(token)
+        if subscriber is None:
+            raise HTTPException(status_code=403, detail="Invalid token")
+        email = subscriber["email"]
+    elif email:
+        # Legacy fallback — still works but token is preferred
+        pass
+    else:
+        raise HTTPException(status_code=400, detail="Provide token or email")
     return await store.list_newsletters_for_subscriber(email, limit)
 
 
@@ -474,7 +493,8 @@ async def add_subscriber(
 
 
 @router.get("/subscribers")
-async def list_subscribers() -> list[dict[str, Any]]:
+async def list_subscribers(x_admin_key: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _check_admin(x_admin_key)
     return await store.list_subscribers_with_groups()
 
 
@@ -523,7 +543,8 @@ async def create_group(
 
 
 @router.get("/groups")
-async def list_groups() -> list[dict[str, Any]]:
+async def list_groups(x_admin_key: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _check_admin(x_admin_key)
     return await store.list_groups()
 
 
@@ -565,7 +586,8 @@ async def remove_from_group(
 
 
 @router.get("/questions")
-async def list_questions() -> list[dict[str, Any]]:
+async def list_questions(x_admin_key: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _check_admin(x_admin_key)
     return await store.list_questions()
 
 
@@ -614,3 +636,15 @@ async def register(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Answers are required")
     result = await store.register_subscriber(email, name, answers)
     return result
+
+
+@router.post("/unsubscribe")
+async def unsubscribe(body: dict[str, Any]) -> dict[str, str]:
+    """Unsubscribe a user by email. Public endpoint — no auth required."""
+    email = (body.get("email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    removed = await store.unsubscribe_by_email(email)
+    if removed:
+        return {"status": "unsubscribed"}
+    return {"status": "not_found"}

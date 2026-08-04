@@ -249,8 +249,11 @@ export async function listNewsletters(): Promise<NewsletterListItem[]> {
   return getJSON("/api/newsletters");
 }
 
-export async function listMyNewsletters(email: string): Promise<NewsletterListItem[]> {
-  return getJSON(`/api/newsletters/mine?email=${encodeURIComponent(email)}`);
+export async function listMyNewsletters(token: string, email?: string): Promise<NewsletterListItem[]> {
+  const params = new URLSearchParams();
+  if (token) params.set("token", token);
+  if (email) params.set("email", email);
+  return getJSON(`/api/newsletters/mine?${params.toString()}`);
 }
 
 export interface SubscriberGroup {
@@ -530,11 +533,21 @@ export async function registerSubscriber(
   email: string,
   name: string,
   answers: { question_id: string; option_ids: string[] }[]
-): Promise<{ subscriber_id: string; assigned_groups: string[] }> {
+): Promise<{ subscriber_id: string; token: string; assigned_groups: string[] }> {
   const res = await fetch(`${API_BASE}/api/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, name, answers }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function unsubscribe(email: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/unsubscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     subscriber_id TEXT PRIMARY KEY,
     email         TEXT NOT NULL UNIQUE,
     name          TEXT NOT NULL DEFAULT '',
+    token         TEXT NOT NULL DEFAULT '',
     created_at    TEXT NOT NULL
 );
 
@@ -117,6 +118,7 @@ CREATE TABLE IF NOT EXISTS subscriber_responses (
 _MIGRATIONS = [
     "ALTER TABLE groups ADD COLUMN theme TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE runs ADD COLUMN group_id TEXT",
+    "ALTER TABLE subscribers ADD COLUMN token TEXT NOT NULL DEFAULT ''",
 ]
 
 
@@ -517,6 +519,24 @@ async def get_subscriber_with_groups_by_email(email: str) -> dict[str, Any] | No
         await db.close()
 
 
+async def get_subscriber_by_token(token: str) -> dict[str, Any] | None:
+    """Return subscriber info by auth token, or None if invalid."""
+    if not token:
+        return None
+    db = await _connect()
+    try:
+        cursor = await db.execute(
+            "SELECT subscriber_id, email, name FROM subscribers WHERE token = ?",
+            (token,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return dict(row)
+    finally:
+        await db.close()
+
+
 # --- subscribers ---
 
 
@@ -548,9 +568,19 @@ async def list_subscribers() -> list[dict[str, Any]]:
 async def delete_subscriber(subscriber_id: str) -> bool:
     db = await _connect()
     try:
-        cursor = await db.execute(
-            "DELETE FROM subscribers WHERE subscriber_id = ?", (subscriber_id,)
-        )
+        cursor = await db.execute("DELETE FROM subscribers WHERE subscriber_id = ?", (subscriber_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def unsubscribe_by_email(email: str) -> bool:
+    """Remove a subscriber and all their group memberships by email.
+    Returns True if a subscriber was found and removed."""
+    db = await _connect()
+    try:
+        cursor = await db.execute("DELETE FROM subscribers WHERE email = ?", (email,))
         await db.commit()
         return cursor.rowcount > 0
     finally:
@@ -764,11 +794,13 @@ async def register_subscriber(
 
     answers: list of {"question_id": ..., "option_ids": [str, ...]}
 
-    Returns {"subscriber_id": ..., "assigned_groups": [...]}
+    Returns {"subscriber_id": ..., "token": ..., "assigned_groups": [...]}
     """
     import uuid
+    import secrets
 
     subscriber_id = uuid.uuid4().hex[:12]
+    token = secrets.token_urlsafe(32)
     db = await _connect()
     try:
         # Create subscriber (or update if exists)
@@ -779,13 +811,13 @@ async def register_subscriber(
         if existing_row:
             subscriber_id = existing_row["subscriber_id"]
             await db.execute(
-                "UPDATE subscribers SET name = ? WHERE subscriber_id = ?",
-                (name, subscriber_id),
+                "UPDATE subscribers SET name = ?, token = ? WHERE subscriber_id = ?",
+                (name, token, subscriber_id),
             )
         else:
             await db.execute(
-                "INSERT INTO subscribers (subscriber_id, email, name, created_at) VALUES (?, ?, ?, ?)",
-                (subscriber_id, email, name, _now()),
+                "INSERT INTO subscribers (subscriber_id, email, name, token, created_at) VALUES (?, ?, ?, ?, ?)",
+                (subscriber_id, email, name, token, _now()),
             )
 
         # Clear old responses for this subscriber
@@ -840,6 +872,6 @@ async def register_subscriber(
                 assigned_groups.append(gname)
 
         await db.commit()
-        return {"subscriber_id": subscriber_id, "assigned_groups": assigned_groups}
+        return {"subscriber_id": subscriber_id, "token": token, "assigned_groups": assigned_groups}
     finally:
         await db.close()

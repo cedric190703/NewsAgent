@@ -75,6 +75,8 @@ class Settings(BaseSettings):
 
     # --- admin ---
     admin_password: str = "admin123"
+    # Secret key for signing subscriber auth tokens (change in production!)
+    secret_key: str = "change-me-in-production"
 
     # --- email / mailing list ---
     # SMTP (optional — used if resend_api_key is not set)
