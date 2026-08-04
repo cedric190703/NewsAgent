@@ -342,6 +342,18 @@ async def delete_schedule(schedule_id: str) -> bool:
         await db.close()
 
 
+async def update_schedule_last_run(schedule_id: str) -> None:
+    db = await _connect()
+    try:
+        await db.execute(
+            "UPDATE schedules SET last_run_at = ? WHERE schedule_id = ?",
+            (_now(), schedule_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 # --- topics ---
 
 

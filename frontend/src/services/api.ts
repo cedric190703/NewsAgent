@@ -157,8 +157,10 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json();
 }
 
-async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+async function getJSON<T>(path: string, adminKey?: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -548,6 +550,58 @@ export async function unsubscribe(email: string): Promise<{ status: string }> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface Schedule {
+  schedule_id: string;
+  themes: string[];
+  cron_expr: string;
+  config: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  last_run_at: string | null;
+}
+
+export async function listSchedules(adminKey: string): Promise<Schedule[]> {
+  return getJSON("/api/schedules", adminKey);
+}
+
+export async function createSchedule(
+  themes: string[],
+  cronExpr: string,
+  config: Record<string, unknown>,
+  adminKey: string,
+): Promise<{ schedule_id: string; status: string }> {
+  const res = await fetch(`${API_BASE}/api/schedules`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify({ themes, cron_expr: cronExpr, config }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function toggleSchedule(
+  scheduleId: string,
+  enabled: boolean,
+  adminKey: string,
+): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteSchedule(scheduleId: string, adminKey: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();

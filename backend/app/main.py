@@ -7,6 +7,7 @@ from app.api.news import router as news_router
 from app.api.runs import router as runs_router
 from app.core.config import settings
 from app.services.store import init_db
+from app.services.scheduler import start_scheduler, stop_scheduler
 
 
 app = FastAPI(
@@ -19,6 +20,12 @@ app = FastAPI(
 @app.on_event("startup")
 async def _startup() -> None:
     await init_db()
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    stop_scheduler()
 
 
 app.add_middleware(

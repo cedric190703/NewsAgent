@@ -370,16 +370,22 @@ async def list_bookmarks(run_id: str) -> list[dict[str, Any]]:
 
 @router.post("/schedules")
 async def create_schedule(
-    themes: list[str], cron_expr: str, config: RunRequest
+    body: dict[str, Any],
+    x_admin_key: str | None = Header(default=None),
 ) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    themes = body.get("themes", [])
+    cron_expr = body.get("cron_expr", "daily")
+    config_data = body.get("config", {})
     schedule_id = uuid4().hex
-    run_config = RunConfig(**config.model_dump())
+    run_config = RunConfig(**config_data)
     await store.create_schedule(schedule_id, themes, cron_expr, run_config)
     return {"schedule_id": schedule_id, "status": "created"}
 
 
 @router.get("/schedules")
-async def list_schedules() -> list[dict[str, Any]]:
+async def list_schedules(x_admin_key: str | None = Header(default=None)) -> list[dict[str, Any]]:
+    _check_admin(x_admin_key)
     schedules = await store.list_schedules()
     for sched in schedules:
         sched["themes"] = json.loads(sched["themes"]) if sched.get("themes") else []
@@ -388,7 +394,13 @@ async def list_schedules() -> list[dict[str, Any]]:
 
 
 @router.patch("/schedules/{schedule_id}")
-async def toggle_schedule(schedule_id: str, enabled: bool) -> dict[str, str]:
+async def toggle_schedule(
+    schedule_id: str,
+    body: dict[str, Any] | None = None,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
+    enabled = bool((body or {}).get("enabled", True))
     updated = await store.toggle_schedule(schedule_id, enabled)
     if not updated:
         raise HTTPException(status_code=404, detail="Schedule not found")
@@ -396,7 +408,11 @@ async def toggle_schedule(schedule_id: str, enabled: bool) -> dict[str, str]:
 
 
 @router.delete("/schedules/{schedule_id}")
-async def delete_schedule(schedule_id: str) -> dict[str, str]:
+async def delete_schedule(
+    schedule_id: str,
+    x_admin_key: str | None = Header(default=None),
+) -> dict[str, str]:
+    _check_admin(x_admin_key)
     deleted = await store.delete_schedule(schedule_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Schedule not found")
