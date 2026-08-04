@@ -24,6 +24,7 @@ import {
   RefreshCw,
   HelpCircle,
   Layers,
+  Check,
 } from "lucide-react";
 
 import {
@@ -921,9 +922,25 @@ export function AdminView({ dark, onToggleDark, adminKey, onLogout }: {
                       ) : (
                         history.map((item) => (
                           <div key={item.run_id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                            <button onClick={() => loadHistoryRun(item.run_id)} className="flex-1 text-left transition hover:text-brand-600">
+                            <button onClick={() => loadHistoryRun(item.run_id)} className="flex-1 overflow-hidden text-left transition hover:text-brand-600">
                               <div className="font-medium truncate">{item.config?.theme ?? "Untitled"}</div>
-                              <div className="text-xs text-slate-400">{new Date(item.created_at).toLocaleDateString()} · {item.status}</div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
+                                <span>{new Date(item.created_at).toLocaleDateString()}</span>
+                                <span>·</span>
+                                <span>{item.status}</span>
+                                {item.group_name && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 font-medium text-brand-700 dark:bg-brand-900/20 dark:text-brand-300">
+                                    <Users size={9} />
+                                    {item.group_name}
+                                  </span>
+                                )}
+                                {item.delivery_count > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
+                                    <Check size={9} />
+                                    Delivered
+                                  </span>
+                                )}
+                              </div>
                             </button>
                             <button onClick={() => handleDeleteRun(item.run_id)} className="text-slate-300 transition hover:text-red-500">
                               <Trash2 size={15} />

@@ -121,6 +121,9 @@ export interface RunHistoryItem {
   run_id: string;
   config: RunConfig | null;
   status: string;
+  group_id: string | null;
+  group_name: string | null;
+  delivery_count: number;
   created_at: string;
   finished_at: string | null;
 }
@@ -214,6 +217,8 @@ export interface NewsletterListItem {
   title: string;
   subtitle: string;
   newsletter: Newsletter | null;
+  group_id: string | null;
+  group_name: string | null;
   created_at: string;
   finished_at: string | null;
 }

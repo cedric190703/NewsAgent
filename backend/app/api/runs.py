@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +26,8 @@ from app.services import store
 from app.services.exporter import to_html, to_markdown, to_pdf
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _check_admin(x_admin_key: str | None) -> None:
@@ -155,11 +159,15 @@ async def execute_batch_runs(
 
     Uses each group's theme, or infers a theme from the group name if not set.
     Runs are executed sequentially to avoid overwhelming the LLM provider.
+    Each finished newsletter is linked to its group and delivered to that
+    group's subscribers, unless `auto_send` is false — in which case it is
+    still published to the group feed but no email is sent.
     Returns immediately with the list of created run IDs.
     """
     _check_admin(x_admin_key)
     groups = await store.list_groups()
     overrides = body or {}
+    auto_send = bool(overrides.get("auto_send", True))
 
     created: list[dict[str, Any]] = []
 
@@ -167,7 +175,7 @@ async def execute_batch_runs(
         theme = (g.get("theme") or "").strip()
         if not theme:
             theme = _infer_theme(g["name"])
-            # Update the group with the inferred theme
+            # Persist the inferred theme so it shows up in the UI
             await store.create_group(
                 g["group_id"], g["name"], g.get("description", ""), theme
             )
@@ -183,7 +191,7 @@ async def execute_batch_runs(
             max_sources=overrides.get("max_sources", 20),
             enable_factcheck=overrides.get("enable_factcheck", True),
         )
-        await store.save_run(run_id, config)
+        await store.save_run(run_id, config, group_id=g["group_id"])
         created.append({
             "run_id": run_id,
             "group_id": g["group_id"],
@@ -191,33 +199,50 @@ async def execute_batch_runs(
             "theme": theme,
         })
 
-    # Kick off background execution for all runs sequentially
-    import asyncio as _asyncio
+    asyncio.create_task(_run_batch(created, auto_send))
 
-    async def _execute_all():
-        for item in created:
-            run_id = item["run_id"]
-            try:
-                run = await store.get_run(run_id)
-                if run is None:
-                    continue
-                config = RunConfig.model_validate_json(run["config"])
-                final_newsletter = None
-                async for _node, update in stream_run(config, run_id=run_id):
-                    if (update or {}).get("newsletter") is not None:
-                        final_newsletter = update["newsletter"]
-                status = "done" if final_newsletter else "partial"
-                await store.finish_run(run_id, final_newsletter, status)
-            except Exception as exc:
-                await store.finish_run(run_id, None, "error")
-
-    _asyncio.create_task(_execute_all())
-
+    verb = "Generating and sending" if auto_send else "Generating"
     return {
         "created": created,
         "skipped": [],
-        "message": f"Executing {len(created)} runs in background. Check History for results.",
+        "message": f"{verb} {len(created)} newsletters in the background.",
     }
+
+
+async def _run_batch(items: list[dict[str, Any]], auto_send: bool) -> None:
+    """Execute queued group runs one at a time, then publish/deliver each."""
+    from app.services.mailer import send_newsletter as _send
+
+    for item in items:
+        run_id = item["run_id"]
+        group_id = item["group_id"]
+        try:
+            run = await store.get_run(run_id)
+            if run is None:
+                continue
+            config = RunConfig.model_validate_json(run["config"])
+            final_newsletter = None
+            async for _node, update in stream_run(config, run_id=run_id):
+                if (update or {}).get("newsletter") is not None:
+                    final_newsletter = update["newsletter"]
+
+            await store.finish_run(
+                run_id, final_newsletter, "done" if final_newsletter else "partial"
+            )
+
+            if final_newsletter is None:
+                continue
+
+            # Publish to the group feed first so it is visible in the user's
+            # "My newsletters" even if the group has no subscribers yet or
+            # email delivery fails.
+            await store.record_delivery(run_id, [group_id])
+
+            if auto_send:
+                await _send(run_id, [group_id])
+        except Exception:
+            logger.exception("Batch run %s failed", run_id)
+            await store.finish_run(run_id, None, "error")
 
 
 @router.get("/runs/{run_id}/stream")

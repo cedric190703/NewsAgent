@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS runs (
     config      TEXT NOT NULL,
     newsletter  TEXT,
     status      TEXT NOT NULL DEFAULT 'running',
+    group_id    TEXT,
     created_at  TEXT NOT NULL,
     finished_at TEXT
 );
@@ -111,6 +112,14 @@ CREATE TABLE IF NOT EXISTS subscriber_responses (
 """
 
 
+# Additive migrations for databases created before a column existed.
+# Each statement is attempted once at startup and ignored if it already applied.
+_MIGRATIONS = [
+    "ALTER TABLE groups ADD COLUMN theme TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE runs ADD COLUMN group_id TEXT",
+]
+
+
 def _ensure_dir() -> None:
     os.makedirs(settings.data_dir, exist_ok=True)
 
@@ -130,23 +139,28 @@ async def init_db() -> None:
     db = await _connect()
     try:
         await db.executescript(_SCHEMA)
-        # Migrations: add theme column to groups if missing
-        try:
-            await db.execute("ALTER TABLE groups ADD COLUMN theme TEXT NOT NULL DEFAULT ''")
-        except Exception:
-            pass  # Column already exists
+        for migration in _MIGRATIONS:
+            try:
+                await db.execute(migration)
+            except Exception:
+                pass  # Column already exists
         await db.commit()
     finally:
         await db.close()
 
 
-async def save_run(run_id: str, config: RunConfig) -> None:
+async def save_run(
+    run_id: str,
+    config: RunConfig,
+    group_id: str | None = None,
+) -> None:
+    """Persist a run. `group_id` links the run to the group it was generated for."""
     db = await _connect()
     try:
         await db.execute(
-            "INSERT OR REPLACE INTO runs (run_id, config, status, created_at) "
-            "VALUES (?, ?, 'running', ?)",
-            (run_id, config.model_dump_json(), _now()),
+            "INSERT OR REPLACE INTO runs (run_id, config, status, group_id, created_at) "
+            "VALUES (?, ?, 'running', ?, ?)",
+            (run_id, config.model_dump_json(), group_id, _now()),
         )
         await db.commit()
     finally:
@@ -179,8 +193,11 @@ async def list_runs(limit: int = 50) -> list[dict[str, Any]]:
     db = await _connect()
     try:
         cursor = await db.execute(
-            "SELECT run_id, config, status, created_at, finished_at "
-            "FROM runs ORDER BY created_at DESC LIMIT ?",
+            "SELECT r.run_id, r.config, r.status, r.group_id, r.created_at, r.finished_at, "
+            "g.name AS group_name, "
+            "(SELECT COUNT(*) FROM run_deliveries rd WHERE rd.run_id = r.run_id) AS delivery_count "
+            "FROM runs r LEFT JOIN groups g ON g.group_id = r.group_id "
+            "ORDER BY r.created_at DESC LIMIT ?",
             (limit,),
         )
         rows = await cursor.fetchall()
@@ -382,9 +399,11 @@ async def list_newsletters(limit: int = 50) -> list[dict[str, Any]]:
     db = await _connect()
     try:
         cursor = await db.execute(
-            "SELECT run_id, config, newsletter, created_at, finished_at "
-            "FROM runs WHERE status IN ('done', 'partial') AND newsletter IS NOT NULL "
-            "ORDER BY created_at DESC LIMIT ?",
+            "SELECT r.run_id, r.config, r.newsletter, r.created_at, r.finished_at, "
+            "r.group_id, g.name AS group_name "
+            "FROM runs r LEFT JOIN groups g ON g.group_id = r.group_id "
+            "WHERE r.status IN ('done', 'partial') AND r.newsletter IS NOT NULL "
+            "ORDER BY r.created_at DESC LIMIT ?",
             (limit,),
         )
         rows = await cursor.fetchall()
@@ -398,6 +417,8 @@ async def list_newsletters(limit: int = 50) -> list[dict[str, Any]]:
                 "title": (newsletter or {}).get("title", config.get("theme", "Untitled")),
                 "subtitle": (newsletter or {}).get("subtitle", ""),
                 "newsletter": newsletter,
+                "group_id": row["group_id"],
+                "group_name": row["group_name"],
                 "created_at": row["created_at"],
                 "finished_at": row["finished_at"],
             })
