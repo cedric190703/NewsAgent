@@ -17,6 +17,22 @@ A multi-agent news intelligence platform that fetches, filters, scores, fact-che
 - **Fact-checker**: Cross-checks claims and flags conflicts between articles
 - **Composer**: Assembles the final newsletter with LLM-written titles, intros, and section blurbs
 
+### Batch Generation & Auto-Delivery
+
+- **One-click batch generation**: Create and execute newsletter runs for all groups simultaneously
+- **Auto-theme inference**: Groups without an explicit theme automatically get one inferred from their name
+- **Auto-delivery**: Finished newsletters are immediately published to group feeds and emailed to subscribers — no manual send step required
+- **Background execution**: Batch runs stream in the background; the admin gets immediate feedback with a status message
+- **Run-to-group linking**: Every run is persistently linked to its group, visible in admin history with group name and delivery status badges
+
+### Recurring Schedules (Background Scheduler)
+
+- Create schedules with themes and interval expressions (`hourly`, `daily`, `weekly`, `monthly`, `every Nh`, or cron-like `0 */N * * *`)
+- The scheduler polls every 60 seconds and automatically executes due schedules
+- Each scheduled run generates a newsletter per theme, links it to the matching group, and auto-delivers to subscribers
+- Schedules can be enabled/disabled and deleted from the admin dashboard
+- Runs entirely in the background via an asyncio task started on app startup
+
 ### User Registration & Groups
 
 - Multi-step registration flow: Welcome → Details → Profile (multi-select questionnaire) → Review → Done
@@ -24,6 +40,15 @@ A multi-agent news intelligence platform that fetches, filters, scores, fact-che
 - Review step shows all selected options and groups before final confirmation
 - Admin can create/delete questions and options via the Admin Dashboard
 - Each option maps to a group name; users can join multiple groups
+- On registration, a secure auth token is generated and stored client-side in localStorage
+
+### Security & Authentication
+
+- **Admin endpoints protected**: All subscriber, group, question, schedule, and run management endpoints require an `X-Admin-Key` header
+- **Subscriber tokens**: Registration generates a cryptographically secure token used for authenticated newsletter feed access
+- **Token-based feed access**: `/api/newsletters/mine` accepts a subscriber token (preferred) or email (legacy fallback)
+- **Unsubscribe mechanism**: Users can self-unsubscribe via `POST /api/unsubscribe` or the unsubscribe link in every email (legal compliance)
+- **Unsubscribe page**: Accessible at `/#/unsubscribe?email=...` with a clean, standalone UI
 
 ### Newsletter Delivery
 
@@ -31,21 +56,26 @@ A multi-agent news intelligence platform that fetches, filters, scores, fact-che
 - Subscribers in a single group receive the standard newsletter
 - Subscribers in multiple groups receive a combined email with all group newsletters
 - Email delivery via Resend API or SMTP fallback
+- Every email includes a personalized unsubscribe link
 
 ### Admin Dashboard
 
 - Pipeline orchestration: trigger newsletter generation runs with configurable themes, audiences, tones, lengths, and curation modes
-- Subscriber management
+- **Batch generate**: One-click generation for all groups with auto-theme inference and auto-delivery
+- **Schedule management**: Create, toggle, and delete recurring newsletter schedules
+- Run history with group name badges, delivery status indicators, and newsletter previews
+- Subscriber management with group assignments
 - Question & option management (CRUD for registration questionnaire)
-- Run history with newsletter previews
 - Protected by admin key authentication
 
 ### User Portal
 
-- Sign-in modal for returning users
+- Sign-in modal for returning users (email-based, with token stored for future sessions)
 - Registration modal with multi-select checkboxes and review step
 - Newsletter browsing with search and filtering
+- Personalized "My Newsletters" feed based on group memberships
 - Preview/teaser content for non-authenticated visitors
+- Self-service unsubscribe page
 - Dark mode support
 
 ## Architecture
@@ -56,22 +86,24 @@ User/Admin (React + Vite)
     v
 FastAPI backend
     |
-    v
-LangGraph pipeline
+    +--> LangGraph pipeline
+    |       +--> Planner (theme -> search angles)
+    |       +--> Research (parallel, per angle)
+    |       +--> Curator (score, rank, select)
+    |       |       +--> widen_queries (retry on thin results)
+    |       +--> Summarizer (parallel, per article)
+    |       +--> Fact-checker (cross-reference claims)
+    |       +--> Composer (assemble newsletter)
     |
-    +--> Planner (theme -> search angles)
-    +--> Research (parallel, per angle)
-    +--> Curator (score, rank, select)
-    |       +--> widen_queries (retry on thin results)
-    +--> Summarizer (parallel, per article)
-    +--> Fact-checker (cross-reference claims)
-    +--> Composer (assemble newsletter)
+    +--> Background Scheduler (asyncio task, 60s poll)
+    |       +--> Checks enabled schedules
+    |       +--> Executes due schedules (create runs, generate, deliver)
     |
     v
-SQLite storage (runs, subscribers, groups, questions)
+SQLite storage (runs, subscribers, groups, schedules, questions, deliveries)
     |
     v
-Email delivery (Resend / SMTP)
+Email delivery (Resend / SMTP) with unsubscribe links
 ```
 
 ## Scoring System
@@ -178,6 +210,7 @@ Key environment variables (see `backend/.env.example`):
 | `RESEND_API_KEY` | — | Resend email API key |
 | `SMTP_HOST` | — | SMTP server host (fallback for email) |
 | `ADMIN_PASSWORD` | `admin123` | Admin dashboard password |
+| `SECRET_KEY` | `change-me-in-production` | Secret for signing subscriber tokens |
 | `RELEVANCE_THRESHOLD` | `0.30` | Minimum relevance score for article selection |
 | `RESULTS_PER_SUBTOPIC` | `20` | Max results to fetch per sub-topic |
 | `MAX_SEARCH_ATTEMPTS` | `2` | Retry attempts when results are thin |
@@ -186,23 +219,39 @@ Key environment variables (see `backend/.env.example`):
 
 ### Public
 
-- `GET /api/health` — Health check
-- `POST /api/runs` — Start a newsletter generation run
-- `GET /api/runs` — List recent runs
-- `GET /api/runs/{run_id}` — Get run status and newsletter
-- `GET /api/newsletters` — List completed newsletters
-- `GET /api/questions` — List registration questions
-- `POST /api/register` — Register a subscriber with questionnaire answers
-- `GET /api/subscriber/newsletters?email=...` — List newsletters for a subscriber
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/runs` | Start a newsletter generation run |
+| `GET` | `/api/runs` | List recent runs (includes group name, delivery count) |
+| `GET` | `/api/runs/{run_id}` | Get run status and newsletter |
+| `GET` | `/api/newsletters` | List completed newsletters |
+| `GET` | `/api/newsletters/mine` | List newsletters for a subscriber (requires `token` or `email` param) |
+| `POST` | `/api/register` | Register a subscriber with questionnaire answers (returns auth token) |
+| `POST` | `/api/unsubscribe` | Unsubscribe by email (no auth required) |
 
 ### Admin (requires `X-Admin-Key` header)
 
-- `POST /api/questions` — Create a question with options
-- `DELETE /api/questions/{question_id}` — Delete a question
-- `GET /api/subscribers` — List subscribers
-- `GET /api/groups` — List groups
-- `POST /api/runs/{run_id}/send` — Send newsletter to subscribers
-- `GET /api/runs/{run_id}/deliveries` — Check delivery status
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/runs/batch/execute` | Create and execute runs for all groups with auto-delivery |
+| `POST` | `/api/runs/{run_id}/send` | Send newsletter to group subscribers |
+| `GET` | `/api/runs/{run_id}/deliveries` | Check delivery status |
+| `GET` | `/api/subscribers` | List subscribers with group memberships |
+| `POST` | `/api/subscribers` | Add a subscriber |
+| `DELETE` | `/api/subscribers/{id}` | Delete a subscriber |
+| `POST` | `/api/subscribers/{id}/groups/{gid}` | Assign subscriber to group |
+| `DELETE` | `/api/subscribers/{id}/groups/{gid}` | Remove subscriber from group |
+| `GET` | `/api/groups` | List groups |
+| `POST` | `/api/groups` | Create a group (with theme) |
+| `DELETE` | `/api/groups/{id}` | Delete a group |
+| `GET` | `/api/questions` | List registration questions |
+| `POST` | `/api/questions` | Create a question with options |
+| `DELETE` | `/api/questions/{id}` | Delete a question |
+| `GET` | `/api/schedules` | List recurring schedules |
+| `POST` | `/api/schedules` | Create a schedule (themes, cron expression, config) |
+| `PATCH` | `/api/schedules/{id}` | Enable/disable a schedule |
+| `DELETE` | `/api/schedules/{id}` | Delete a schedule |
 
 ## Repository Structure
 
@@ -210,18 +259,18 @@ Key environment variables (see `backend/.env.example`):
 .
 ├── backend/
 │   ├── app/
-│   │   ├── api/           # FastAPI routes
+│   │   ├── api/           # FastAPI routes (runs, auth, health, news)
 │   │   ├── core/          # Config and settings
 │   │   ├── graph/         # LangGraph pipeline (nodes, scoring, state)
 │   │   ├── providers/     # LLM provider abstraction
-│   │   ├── search/        # Search provider integrations
-│   │   └── services/      # Storage, mailer, exporter
+│   │   ├── search/        # Search provider integrations (RSS, Tavily, NewsAPI)
+│   │   └── services/      # Storage, mailer, exporter, scheduler
 │   ├── tests/
 │   ├── Dockerfile
 │   └── pyproject.toml
 ├── frontend/
 │   ├── src/
-│   │   ├── components/    # React components (UserView, AdminView, modals)
+│   │   ├── components/    # React components (UserView, AdminView, UnsubscribeView, modals)
 │   │   ├── services/      # API client
 │   │   ├── lib/           # Utilities
 │   │   └── styles/        # CSS
