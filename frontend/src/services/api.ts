@@ -5,6 +5,7 @@ export type Length = "brief" | "standard" | "deep";
 export interface RunConfig {
   theme: string;
   extra_themes?: string[];
+  audience?: string;
   subtopic_count?: number;
   date_from?: string | null;
   date_to?: string | null;
@@ -14,6 +15,8 @@ export interface RunConfig {
   good_news_mode?: GoodNewsMode;
   enable_factcheck?: boolean;
   providers?: string[];
+  custom_feeds?: string[];
+  custom_urls?: string[];
 }
 
 export interface CreateRunResponse {
@@ -114,24 +117,27 @@ export interface Topology {
   edges: TopologyEdge[];
 }
 
-export type RunStatus = "running" | "done" | "partial" | "error" | "cancelled";
-
 export interface RunHistoryItem {
   run_id: string;
   config: RunConfig | null;
-  status: RunStatus | string;
-  error: string | null;
-  source: string;
+  status: string;
+  group_id: string | null;
+  group_name: string | null;
+  delivery_count: number;
   created_at: string;
   finished_at: string | null;
 }
 
-export interface RunDetail extends RunHistoryItem {
+export interface RunDetail {
+  run_id: string;
+  config: RunConfig | null;
   newsletter: Newsletter | null;
+  status: string;
+  created_at: string;
+  finished_at: string | null;
 }
 
 export interface Bookmark {
-  run_id: string;
   article_id: string;
   url: string;
   title: string;
@@ -139,122 +145,268 @@ export interface Bookmark {
   created_at: string;
 }
 
-export interface Schedule {
-  schedule_id: string;
-  themes: string[];
-  cron_expr: string;
-  config: RunConfig | null;
-  enabled: boolean;
-  created_at: string;
-  last_run_at: string | null;
-  last_run_id: string | null;
-  next_run_at: string | null;
-}
-
-export interface AppStatus {
-  app_name: string;
-  version: string;
-  environment: string;
-  llm_provider: string;
-  llm_model: string;
-  search_providers: string[];
-  using_real_data: boolean;
-  rss_feeds_count: number;
-  factcheck_enabled: boolean;
-  scheduler_running: boolean;
-}
-
-export interface ValidationIssue {
-  field: string;
-  message: string;
-  type: string;
-}
-
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
-/**
- * The API reports validation failures as `{detail, errors: [{field, message}]}`.
- * Surfacing "theme: String should have at least 3 characters" beats surfacing
- * the raw JSON blob the previous client threw.
- */
 export class ApiError extends Error {
-  readonly status: number;
-  readonly issues: ValidationIssue[];
-
-  constructor(status: number, message: string, issues: ValidationIssue[] = []) {
+  constructor(public status: number, message: string) {
     super(message);
     this.name = "ApiError";
-    this.status = status;
-    this.issues = issues;
   }
 }
 
 async function toApiError(res: Response): Promise<ApiError> {
   const body = await res.text();
-  try {
-    const parsed = JSON.parse(body);
-    const issues: ValidationIssue[] = Array.isArray(parsed.errors) ? parsed.errors : [];
-    const message = issues.length
-      ? issues.map((issue) => `${issue.field}: ${issue.message}`).join("; ")
-      : (parsed.detail ?? body ?? res.statusText);
-    return new ApiError(res.status, String(message), issues);
-  } catch {
-    return new ApiError(res.status, body || res.statusText);
-  }
+  const message = body || res.statusText || "Request failed";
+  return new ApiError(res.status, message);
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}${path}`, init);
-  } catch (err) {
-    throw new ApiError(0, err instanceof Error ? err.message : "Network request failed");
-  }
-  if (!res.ok) throw await toApiError(res);
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
-}
-
-function getJSON<T>(path: string): Promise<T> {
-  return request<T>(path);
-}
-
-function postJSON<T>(path: string, body?: unknown): Promise<T> {
-  return request<T>(path, {
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-}
-
-function patchJSON<T>(path: string, body: unknown): Promise<T> {
-  return request<T>(path, {
-    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!res.ok) throw await toApiError(res);
+  return res.json();
+}
+
+async function getJSON<T>(path: string, adminKey?: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  if (!res.ok) throw await toApiError(res);
+  return res.json();
 }
 
 async function deleteJSON(path: string): Promise<void> {
-  await request<unknown>(path, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  if (!res.ok) throw await toApiError(res);
 }
 
-// --- runs ---------------------------------------------------------------
-
-export async function createRun(config: RunConfig): Promise<CreateRunResponse> {
-  return postJSON("/api/runs", config);
+export async function createRun(config: RunConfig, adminKey?: string): Promise<CreateRunResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/runs`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function getTopology(): Promise<Topology> {
   return getJSON("/api/graph/topology");
 }
 
+export interface AppStatus {
+  llm_provider: string;
+  llm_model: string;
+  search_providers: string[];
+  using_real_data: boolean;
+  rss_feeds_count: number;
+}
+
 export async function getStatus(): Promise<AppStatus> {
   return getJSON("/api/status");
 }
 
-export async function listRuns(limit = 50): Promise<RunHistoryItem[]> {
-  return getJSON(`/api/runs?limit=${limit}`);
+export async function verifyAdminKey(adminKey: string): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/api/auth/verify`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  return res.ok;
+}
+
+export interface Topic {
+  topic_id: string;
+  title: string;
+  config: RunConfig | null;
+  created_at: string;
+}
+
+export interface NewsletterListItem {
+  run_id: string;
+  theme: string;
+  title: string;
+  subtitle: string;
+  newsletter: Newsletter | null;
+  group_id: string | null;
+  group_name: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export async function listTopics(): Promise<Topic[]> {
+  return getJSON("/api/topics");
+}
+
+export async function createTopic(title: string, config: RunConfig, adminKey: string): Promise<{ topic_id: string }> {
+  const res = await fetch(`${API_BASE}/api/topics?title=${encodeURIComponent(title)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteTopic(topicId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function listNewsletters(): Promise<NewsletterListItem[]> {
+  return getJSON("/api/newsletters");
+}
+
+export async function listMyNewsletters(token: string, email?: string): Promise<NewsletterListItem[]> {
+  const params = new URLSearchParams();
+  if (token) params.set("token", token);
+  if (email) params.set("email", email);
+  return getJSON(`/api/newsletters/mine?${params.toString()}`);
+}
+
+export interface SubscriberGroup {
+  group_id: string;
+  name: string;
+}
+
+export interface Subscriber {
+  subscriber_id: string;
+  email: string;
+  name: string;
+  created_at: string;
+  groups?: SubscriberGroup[];
+}
+
+export interface Group {
+  group_id: string;
+  name: string;
+  description: string;
+  theme: string;
+  created_at: string;
+  subscriber_count: number;
+}
+
+export async function listSubscribers(): Promise<Subscriber[]> {
+  return getJSON("/api/subscribers");
+}
+
+export async function addSubscriber(email: string, name: string, adminKey: string): Promise<{ subscriber_id: string }> {
+  const params = new URLSearchParams({ email });
+  if (name) params.set("name", name);
+  const res = await fetch(`${API_BASE}/api/subscribers?${params}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteSubscriber(subscriberId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/subscribers/${subscriberId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function sendNewsletter(runId: string, adminKey: string, groupIds?: string[]): Promise<{ sent: number; failed: number; detail: string }> {
+  const params = new URLSearchParams();
+  if (groupIds && groupIds.length > 0) params.set("group_ids", groupIds.join(","));
+  const qs = params.toString() ? `?${params}` : "";
+  const res = await fetch(`${API_BASE}/api/runs/${runId}/send${qs}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listGroups(): Promise<Group[]> {
+  return getJSON("/api/groups");
+}
+
+export async function createGroup(name: string, description: string, adminKey: string, theme?: string): Promise<{ group_id: string }> {
+  const params = new URLSearchParams({ name });
+  if (description) params.set("description", description);
+  if (theme) params.set("theme", theme);
+  const res = await fetch(`${API_BASE}/api/groups?${params}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface BatchRunResult {
+  created: { run_id: string; group_id: string; group_name: string; theme: string }[];
+  skipped: { group_id: string; name: string; reason: string }[];
+}
+
+export async function batchCreateRuns(
+  overrides: { audience?: string; tone?: string; length?: string; good_news_mode?: string; subtopic_count?: number; max_sources?: number; enable_factcheck?: boolean },
+  adminKey: string,
+): Promise<BatchRunResult> {
+  const res = await fetch(`${API_BASE}/api/runs/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify(overrides),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface BatchExecuteResult {
+  created: { run_id: string; group_id: string; group_name: string; theme: string }[];
+  skipped: { group_id: string; name: string; reason: string }[];
+  message: string;
+}
+
+export async function batchExecuteRuns(
+  overrides: { audience?: string; tone?: string; length?: string; good_news_mode?: string; subtopic_count?: number; max_sources?: number; enable_factcheck?: boolean },
+  adminKey: string,
+): Promise<BatchExecuteResult> {
+  const res = await fetch(`${API_BASE}/api/runs/batch/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify(overrides),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteGroup(groupId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/groups/${groupId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function addSubscriberToGroup(subscriberId: string, groupId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/subscribers/${subscriberId}/groups/${groupId}`, {
+    method: "POST",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function removeSubscriberFromGroup(subscriberId: string, groupId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/subscribers/${subscriberId}/groups/${groupId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function listRuns(): Promise<RunHistoryItem[]> {
+  return getJSON("/api/runs");
 }
 
 export async function getRun(runId: string): Promise<RunDetail> {
@@ -265,22 +417,14 @@ export async function deleteRun(runId: string): Promise<void> {
   await deleteJSON(`/api/runs/${runId}`);
 }
 
-export type ExportFormat = "markdown" | "html" | "pdf";
-
-export async function exportRun(runId: string, fmt: ExportFormat): Promise<Blob> {
+export async function exportRun(runId: string, fmt: "markdown" | "html" | "pdf"): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/runs/${runId}/export/${fmt}`);
-  if (!res.ok) throw await toApiError(res);
+  if (!res.ok) throw new Error(await res.text());
   return res.blob();
 }
 
-// --- bookmarks ----------------------------------------------------------
-
 export async function listBookmarks(runId: string): Promise<Bookmark[]> {
   return getJSON(`/api/runs/${runId}/bookmarks`);
-}
-
-export async function listAllBookmarks(limit = 200): Promise<Bookmark[]> {
-  return getJSON(`/api/bookmarks?limit=${limit}`);
 }
 
 export async function addBookmark(
@@ -289,8 +433,8 @@ export async function addBookmark(
   url: string,
   title: string,
   sourceName: string,
-): Promise<Bookmark> {
-  return postJSON(`/api/runs/${runId}/bookmarks`, {
+): Promise<void> {
+  await postJSON(`/api/runs/${runId}/bookmarks`, {
     article_id: articleId,
     url,
     title,
@@ -300,51 +444,6 @@ export async function addBookmark(
 
 export async function removeBookmark(runId: string, articleId: string): Promise<void> {
   await deleteJSON(`/api/runs/${runId}/bookmarks/${articleId}`);
-}
-
-// --- schedules ----------------------------------------------------------
-
-export async function listSchedules(): Promise<Schedule[]> {
-  return getJSON("/api/schedules");
-}
-
-export async function createSchedule(
-  themes: string[],
-  cronExpr: string,
-  config: RunConfig,
-): Promise<Schedule> {
-  return postJSON("/api/schedules", { themes, cron_expr: cronExpr, config });
-}
-
-export async function toggleSchedule(scheduleId: string, enabled: boolean): Promise<Schedule> {
-  return patchJSON(`/api/schedules/${scheduleId}`, { enabled });
-}
-
-export async function deleteSchedule(scheduleId: string): Promise<void> {
-  await deleteJSON(`/api/schedules/${scheduleId}`);
-}
-
-export async function runScheduleNow(scheduleId: string): Promise<CreateRunResponse> {
-  return postJSON(`/api/schedules/${scheduleId}/run`);
-}
-
-// --- feedback -----------------------------------------------------------
-
-export interface FeedbackResponse {
-  feedback_id: string;
-  status: string;
-}
-
-export async function submitFeedback(
-  runId: string | null,
-  rating: number,
-  comment?: string,
-): Promise<FeedbackResponse> {
-  return postJSON("/api/news/feedback", {
-    run_id: runId,
-    rating,
-    comment: comment?.trim() || null,
-  });
 }
 
 export function streamRunEvents(
@@ -401,4 +500,156 @@ export function streamRunEvents(
   })();
 
   return controller;
+}
+
+// --- Questions & Registration ---
+
+export interface QuestionOption {
+  option_id: string;
+  text: string;
+  group_name: string;
+  position: number;
+}
+
+export interface Question {
+  question_id: string;
+  text: string;
+  position: number;
+  options: QuestionOption[];
+}
+
+export async function listQuestions(): Promise<Question[]> {
+  return getJSON("/api/questions");
+}
+
+export async function createQuestion(
+  text: string,
+  options: { text: string; group_name: string }[],
+  adminKey: string
+): Promise<{ question_id: string }> {
+  const res = await fetch(`${API_BASE}/api/questions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    body: JSON.stringify({ text, options }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteQuestion(questionId: string, adminKey: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/questions/${questionId}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Key": adminKey },
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function registerSubscriber(
+  email: string,
+  name: string,
+  answers: { question_id: string; option_ids: string[] }[]
+): Promise<{ subscriber_id: string; token: string; assigned_groups: string[] }> {
+  const res = await fetch(`${API_BASE}/api/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name, answers }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function unsubscribe(email: string): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/api/unsubscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface Schedule {
+  schedule_id: string;
+  themes: string[];
+  cron_expr: string;
+  config: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  last_run_at: string | null;
+  next_run_at?: string | null;
+}
+
+export async function listSchedules(adminKey?: string): Promise<Schedule[]> {
+  return getJSON("/api/schedules", adminKey);
+}
+
+export async function createSchedule(
+  themes: string[],
+  cronExpr: string,
+  config: Record<string, unknown> | RunConfig,
+  adminKey?: string,
+): Promise<{ schedule_id: string; status: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/schedules`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ themes, cron_expr: cronExpr, config }),
+  });
+  if (!res.ok) throw await toApiError(res);
+  return res.json();
+}
+
+export async function toggleSchedule(
+  scheduleId: string,
+  enabled: boolean,
+  adminKey?: string,
+): Promise<{ status: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw await toApiError(res);
+  return res.json();
+}
+
+export async function deleteSchedule(scheduleId: string, adminKey?: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (!res.ok) throw await toApiError(res);
+}
+
+export async function runScheduleNow(
+  scheduleId: string,
+  adminKey?: string,
+): Promise<{ run_id: string; status: string }> {
+  const headers: Record<string, string> = {};
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}/run`, {
+    method: "POST",
+    headers,
+  });
+  if (!res.ok) throw await toApiError(res);
+  return res.json();
+}
+
+export async function submitFeedback(
+  runId: string,
+  rating: number,
+  comment?: string,
+  articleId?: string,
+): Promise<{ feedback_id: string }> {
+  return postJSON("/api/news/feedback", {
+    run_id: runId,
+    rating,
+    comment: comment || null,
+    article_id: articleId || null,
+  });
 }

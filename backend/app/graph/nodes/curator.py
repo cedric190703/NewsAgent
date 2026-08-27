@@ -32,22 +32,36 @@ from app.graph.state import (
     event,
 )
 from app.providers.base import LLMProvider
+from app.graph.theme_match import (
+    extract_theme_terms,
+    theme_matches,
+    theme_matches_both_concepts,
+    _concept_groups,
+)
 
 NODE = "curator"
 BATCH_SIZE = 5
 
 SYSTEM = (
     "You are a strict news curator. You judge only the text provided. "
-    "You never add information that is not in the text."
+    "You never add information that is not in the text. "
+    "When a target audience is specified, you must factor how relevant "
+    "and useful each article is for that audience into your relevance score. "
+    "Be demanding: if an article only tangentially mentions the theme but "
+    "is really about something else, give it a low relevance score (below 0.3). "
+    "Prefer articles with concrete, specific developments over generic commentary."
 )
 
 RUBRIC = (
     "Score each item from 0.0 to 1.0 on three independent axes:\n"
-    "- relevance: does it actually address the theme and angle?\n"
+    "- relevance: does it directly address the theme and angle? If a target "
+    "audience is specified, also factor how useful and actionable this is for "
+    "that audience. Score below 0.3 for tangential mentions.\n"
     "- valence: is the OUTCOME described constructive (progress, solutions, "
     "recovery, wins)? 0.0 = purely bad news, 0.5 = neutral, 1.0 = clearly good.\n"
     "- signal: is it substantive journalism (specific, sourced, verifiable, "
-    "low hype)? Penalise clickbait, listicles, rage-bait, press-release fluff."
+    "low hype)? Penalise clickbait, listicles, rage-bait, press-release fluff. "
+    "Prefer articles with data, quotes, or specific outcomes."
 )
 
 
@@ -81,8 +95,14 @@ async def _score_batch(
             f"text: {article.body[:1200]}"
         )
 
+    audience_line = ""
+    if config.audience.strip():
+        audience_line = f"Target audience: {config.audience.strip()}\n"
+
     user = (
-        f"Theme(s): {', '.join(config.themes)}\n{RUBRIC}\n\n"
+        f"Theme(s): {', '.join(config.themes)}\n"
+        f"{audience_line}"
+        f"{RUBRIC}\n\n"
         f"Items:\n{chr(10).join(lines)}\n\n"
         "Return one entry per id, reusing the exact id strings."
     )
@@ -102,6 +122,26 @@ async def curator_node(
     subtopic_by_id = {s.id: s for s in state.get("subtopics", [])}
     reference = config.date_to or datetime.now(timezone.utc)
 
+    # Hard filter: for multi-concept themes (e.g. "AI in healthcare"),
+    # require matching BOTH concepts. For single-concept, match any term.
+    combined_theme = " ".join(config.themes)
+    groups = _concept_groups(combined_theme)
+
+    if len(groups) >= 2:
+        before = len(articles)
+        articles = [a for a in articles if theme_matches_both_concepts(f"{a.title} {a.snippet}", combined_theme)]
+        filtered_out = before - len(articles)
+    else:
+        all_theme_terms: set[str] = set()
+        for theme in config.themes:
+            all_theme_terms |= extract_theme_terms(theme)
+        if all_theme_terms:
+            before = len(articles)
+            articles = [a for a in articles if theme_matches(f"{a.title} {a.snippet}", all_theme_terms)]
+            filtered_out = before - len(articles)
+        else:
+            filtered_out = 0
+
     if not articles:
         return {
             "scored": [],
@@ -110,6 +150,32 @@ async def curator_node(
                 event(NODE, "done", detail="No articles to score", counts={"selected": 0})
             ],
         }
+
+    # Cross-subtopic deduplication: remove articles with the same URL
+    seen_urls: set[str] = set()
+    deduped: list[RawArticle] = []
+    dup_count = 0
+    for a in articles:
+        if a.url in seen_urls:
+            dup_count += 1
+            continue
+        seen_urls.add(a.url)
+        deduped.append(a)
+    articles = deduped
+
+    # Source diversity: cap at max 3 articles per domain to ensure variety
+    domain_counts: dict[str, int] = {}
+    MAX_PER_DOMAIN = 3
+    diverse: list[RawArticle] = []
+    domain_filtered = 0
+    for a in articles:
+        cnt = domain_counts.get(a.domain, 0)
+        if cnt >= MAX_PER_DOMAIN:
+            domain_filtered += 1
+            continue
+        domain_counts[a.domain] = cnt + 1
+        diverse.append(a)
+    articles = diverse
 
     batches = [articles[i : i + BATCH_SIZE] for i in range(0, len(articles), BATCH_SIZE)]
     results = await asyncio.gather(
@@ -143,8 +209,9 @@ async def curator_node(
         judged = llm_scores.get(article.id)
         reasons: list[str] = []
         if judged is not None:
-            # Blend: heuristics anchor, LLM adjusts. Avoids one bad call dominating.
-            heuristic.relevance = round(0.4 * heuristic.relevance + 0.6 * judged.relevance, 3)
+            # Blend: heuristics anchor, LLM adjusts. 50/50 for relevance since
+            # heuristic scoring is now more precise with theme-specificity checks.
+            heuristic.relevance = round(0.5 * heuristic.relevance + 0.5 * judged.relevance, 3)
             heuristic.goodness_valence = round(
                 0.4 * heuristic.goodness_valence + 0.6 * judged.valence, 3
             )
@@ -214,7 +281,7 @@ async def curator_node(
                 "done",
                 detail=(
                     f"{len(selected)}/{len(scored)} selected "
-                    f"(mode={config.good_news_mode.value}, axes={active_axes})"
+                    f"({filtered_out} filtered, mode={config.good_news_mode.value}, axes={active_axes})"
                 ),
                 counts={
                     "scored": len(scored),

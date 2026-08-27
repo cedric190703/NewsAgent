@@ -1,233 +1,196 @@
-"""Background scheduler: turns stored schedules into actual runs.
+"""Background scheduler that executes recurring newsletter schedules.
 
-The schedules table previously existed with no executor, so a saved schedule
-never produced a newsletter. This ticks once a minute, fires every enabled
-schedule whose cron expression matches, and records the run against it.
-
-Concurrency is bounded and a schedule already running is skipped rather than
-queued: a slow LLM must not let ticks pile up into a thundering herd.
+Runs as an asyncio task started on app startup. Polls enabled schedules
+every 60 seconds and executes those that are due.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import suppress
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Any
 
 from app.core.config import settings
-from app.core.logging import get_logger
-from app.graph.runner import new_run_id, run_to_completion
-from app.graph.state import Newsletter, RunConfig
-from app.services import cron, store
+from app.graph.runner import new_run_id, stream_run
+from app.graph.state import RunConfig
+from app.services import store
 
-log = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-MAX_CONCURRENT_SCHEDULED_RUNS = 2
+_POLL_INTERVAL = 60  # seconds
+
+# Simple interval mapping: keyword -> hours
+_INTERVAL_HOURS: dict[str, int] = {
+    "hourly": 1,
+    "daily": 24,
+    "weekly": 168,
+    "monthly": 720,
+}
 
 
-class Scheduler:
-    def __init__(self, tick_seconds: int | None = None) -> None:
-        self._tick = tick_seconds or settings.scheduler_tick_seconds
-        self._task: asyncio.Task | None = None
-        self._jobs: set[asyncio.Task] = set()
-        self._running: set[str] = set()
-        self._gate = asyncio.Semaphore(MAX_CONCURRENT_SCHEDULED_RUNS)
-        self._stopping = asyncio.Event()
+def _parse_interval_hours(cron_expr: str) -> int | None:
+    """Parse a cron expression into an interval in hours.
 
-    # --- lifecycle -------------------------------------------------------
+    Supports:
+    - Simple keywords: hourly, daily, weekly, monthly
+    - 'every Nh' or 'every N hours'
+    - Cron-like '0 */N * * *' (every N hours)
+    """
+    expr = cron_expr.strip().lower()
 
-    def start(self) -> None:
-        if self._task is not None and not self._task.done():
-            return
-        self._stopping.clear()
-        self._task = asyncio.create_task(self._loop(), name="scheduler")
-        log.info("scheduler started", extra={"tick_seconds": self._tick})
+    if expr in _INTERVAL_HOURS:
+        return _INTERVAL_HOURS[expr]
 
-    async def stop(self) -> None:
-        """Stop the loop *and* the runs it spawned.
+    # "every 6h" or "every 6 hours"
+    if expr.startswith("every "):
+        rest = expr[6:].strip()
+        # Extract number
+        num_str = ""
+        for ch in rest:
+            if ch.isdigit():
+                num_str += ch
+            else:
+                break
+        if num_str:
+            return int(num_str)
 
-        In-flight runs hold the database and the HTTP client; leaving them
-        detached means they keep executing against resources shutdown is busy
-        closing, which surfaces as spurious errors after the app has exited.
-        """
-
-        self._stopping.set()
-
-        jobs = list(self._jobs)
-        for job in jobs:
-            job.cancel()
-        if self._task is not None:
-            self._task.cancel()
-
-        pending = [job for job in (*jobs, self._task) if job is not None]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-
-        self._jobs.clear()
-        self._running.clear()
-        self._task = None
-        log.info("scheduler stopped")
-
-    @property
-    def is_running(self) -> bool:
-        return self._task is not None and not self._task.done()
-
-    # --- loop ------------------------------------------------------------
-
-    async def _loop(self) -> None:
-        # Align to the top of the next minute so `matches()` is not evaluated
-        # twice inside one minute (which would double-fire a schedule).
-        await self._sleep_to_next_minute()
-        while not self._stopping.is_set():
-            try:
-                await self.tick()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("scheduler tick failed")
-            await self._sleep_to_next_minute()
-
-    async def _sleep_to_next_minute(self) -> None:
-        now = datetime.now(timezone.utc)
-        delay = self._tick - (now.second + now.microsecond / 1_000_000) % self._tick
-        with suppress(TimeoutError):
-            await asyncio.wait_for(self._stopping.wait(), timeout=max(1.0, delay))
-
-    async def tick(self, moment: datetime | None = None) -> list[str]:
-        """Fire every schedule due at `moment`. Returns the schedule ids fired."""
-
-        moment = (moment or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        due = [row for row in await store.list_schedules(enabled_only=True)
-               if self._is_due(row, moment)]
-
-        fired: list[str] = []
-        for row in due:
-            schedule_id = row["schedule_id"]
-            if schedule_id in self._running:
-                log.warning("schedule still running, skipping", extra={"schedule": schedule_id})
-                continue
-            self._running.add(schedule_id)
-            self._spawn(self._execute(row, moment), f"schedule:{schedule_id}")
-            fired.append(schedule_id)
-
-        if fired:
-            log.info("schedules fired", extra={"count": len(fired), "ids": fired})
-        return fired
-
-    async def trigger(self, schedule_id: str) -> str:
-        """Fire a schedule immediately. Returns the run id it will write to."""
-
-        row = await store.get_schedule(schedule_id)
-        if row is None:
-            raise KeyError(schedule_id)
-
-        run_id = new_run_id()
-        self._running.add(schedule_id)
-        self._spawn(
-            self._execute(row, datetime.now(timezone.utc), run_id=run_id),
-            f"schedule:{schedule_id}:manual",
-        )
-        return run_id
-
-    def _spawn(self, coro, name: str) -> asyncio.Task:
-        """Keep a strong reference: bare create_task results can be GC'd mid-run."""
-
-        task = asyncio.create_task(coro, name=name)
-        self._jobs.add(task)
-        task.add_done_callback(self._jobs.discard)
-        return task
-
-    def _is_due(self, row: dict, moment: datetime) -> bool:
+    # Cron-like: "0 */6 * * *" -> every 6 hours
+    parts = expr.split()
+    if len(parts) == 5 and "*/" in parts[1]:
         try:
-            schedule = cron.parse(row["cron_expr"])
-        except cron.CronError as exc:
-            log.warning(
-                "invalid cron expression",
-                extra={"schedule": row["schedule_id"], "error": str(exc)},
-            )
-            return False
-        if not schedule.matches(moment):
-            return False
-        return not _already_ran_this_minute(row.get("last_run_at"), moment)
+            n = int(parts[1].replace("*/", ""))
+            return n
+        except ValueError:
+            pass
 
-    # --- execution -------------------------------------------------------
-
-    async def _execute(
-        self, row: dict, moment: datetime, run_id: str | None = None
-    ) -> None:
-        schedule_id = row["schedule_id"]
-        run_id = run_id or new_run_id()
-        try:
-            config = _config_from_row(row)
-        except Exception:
-            log.exception("schedule config is invalid", extra={"schedule": schedule_id})
-            self._running.discard(schedule_id)
-            return
-
-        # Claim the slot before awaiting the gate so a backed-up scheduler does
-        # not fire the same schedule again on the next tick.
-        await store.mark_schedule_run(schedule_id, run_id, moment)
-
-        try:
-            async with self._gate:
-                await store.save_run(run_id, config, source=f"schedule:{schedule_id}")
-                log.info(
-                    "scheduled run started",
-                    extra={"schedule": schedule_id, "run": run_id, "theme": config.theme},
-                )
-                state = await run_to_completion(config, run_id=run_id)
-                newsletter = state.get("newsletter") if isinstance(state, dict) else None
-                status = "done" if isinstance(newsletter, Newsletter) else "partial"
-                await store.finish_run(run_id, newsletter, status)
-                log.info(
-                    "scheduled run finished",
-                    extra={"schedule": schedule_id, "run": run_id, "status": status},
-                )
-        except asyncio.CancelledError:
-            # Best-effort: the store may already be closing during shutdown.
-            with suppress(Exception):
-                await store.finish_run(
-                    run_id, None, "cancelled", "scheduler shutting down"
-                )
-            raise
-        except Exception as exc:
-            log.exception("scheduled run failed", extra={"schedule": schedule_id})
-            await store.finish_run(run_id, None, "error", f"{type(exc).__name__}: {exc}")
-        finally:
-            self._running.discard(schedule_id)
+    # Default: daily
+    return 24
 
 
-def _already_ran_this_minute(last_run_at: str | None, moment: datetime) -> bool:
-    if not last_run_at:
+def _is_due(schedule: dict[str, Any], now: datetime) -> bool:
+    """Check if a schedule is due to run based on its last_run_at."""
+    if not schedule.get("enabled"):
         return False
+
+    interval_h = _parse_interval_hours(schedule.get("cron_expr", "daily"))
+    if interval_h is None or interval_h <= 0:
+        return False
+
+    last_run = schedule.get("last_run_at")
+    if not last_run:
+        # Never run — run immediately
+        return True
+
     try:
-        previous = datetime.fromisoformat(last_run_at)
-    except ValueError:
-        return False
-    if previous.tzinfo is None:
-        previous = previous.replace(tzinfo=timezone.utc)
-    return previous.replace(second=0, microsecond=0) >= moment.replace(
-        second=0, microsecond=0
-    )
+        last_dt = datetime.fromisoformat(last_run)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return True
+
+    next_due = last_dt + timedelta(hours=interval_h)
+    return now >= next_due
 
 
-def _config_from_row(row: dict) -> RunConfig:
-    """The schedule's themes win over whatever theme the stored config carries."""
+async def _execute_schedule(schedule: dict[str, Any]) -> None:
+    """Execute a schedule: create and run a newsletter for each theme."""
+    from app.services.mailer import send_newsletter as _send
 
-    config = RunConfig.model_validate_json(row["config"])
-    themes = json.loads(row["themes"]) if row.get("themes") else []
-    themes = [t for t in themes if isinstance(t, str) and t.strip()]
+    themes = json.loads(schedule["themes"]) if schedule.get("themes") else []
+    config_data = json.loads(schedule["config"]) if schedule.get("config") else {}
+    schedule_id = schedule["schedule_id"]
+
     if not themes:
-        return config
-    return config.model_copy(update={"theme": themes[0], "extra_themes": themes[1:]})
+        logger.warning("Schedule %s has no themes, skipping", schedule_id)
+        await store.update_schedule_last_run(schedule_id)
+        return
+
+    # Find groups matching the themes
+    groups = await store.list_groups()
+    theme_to_group: dict[str, dict[str, Any] | None] = {}
+    for theme in themes:
+        matched = None
+        for g in groups:
+            g_theme = (g.get("theme") or "").strip().lower()
+            g_name = g["name"].strip().lower()
+            if g_theme == theme.lower() or g_name == theme.lower():
+                matched = g
+                break
+        theme_to_group[theme] = matched
+
+    base_config = RunConfig.model_validate(config_data)
+
+    for theme, group in theme_to_group.items():
+        run_id = new_run_id()
+        config = base_config.model_copy(update={"theme": theme})
+        group_id = group["group_id"] if group else None
+        await store.save_run(run_id, config, group_id=group_id)
+
+        try:
+            final_newsletter = None
+            async for _node, update in stream_run(config, run_id=run_id):
+                if (update or {}).get("newsletter") is not None:
+                    final_newsletter = update["newsletter"]
+
+            await store.finish_run(
+                run_id, final_newsletter, "done" if final_newsletter else "partial"
+            )
+
+            if final_newsletter is not None and group_id:
+                await store.record_delivery(run_id, [group_id])
+                await _send(run_id, [group_id])
+
+            logger.info("Schedule %s: completed run %s for theme '%s'", schedule_id, run_id, theme)
+        except Exception:
+            logger.exception("Schedule %s: run %s failed", schedule_id, run_id)
+            await store.finish_run(run_id, None, "error")
+
+    await store.update_schedule_last_run(schedule_id)
 
 
-_scheduler: Scheduler | None = None
+async def _scheduler_loop() -> None:
+    """Main scheduler loop — polls for due schedules and executes them."""
+    logger.info("Scheduler loop started")
+    while True:
+        try:
+            schedules = await store.list_schedules()
+            now = datetime.now(timezone.utc)
+
+            due = [s for s in schedules if _is_due(s, now)]
+
+            if due:
+                logger.info("Scheduler: %d schedule(s) due", len(due))
+
+            for sched in due:
+                try:
+                    logger.info("Executing schedule %s (%s)", sched["schedule_id"], sched.get("cron_expr"))
+                    await _execute_schedule(sched)
+                except Exception:
+                    logger.exception("Failed to execute schedule %s", sched["schedule_id"])
+
+        except Exception:
+            logger.exception("Scheduler loop error")
+
+        await asyncio.sleep(_POLL_INTERVAL)
 
 
-def get_scheduler() -> Scheduler:
-    global _scheduler
-    if _scheduler is None:
-        _scheduler = Scheduler()
-    return _scheduler
+_scheduler_task: asyncio.Task | None = None
+
+
+def start_scheduler() -> None:
+    """Start the background scheduler task. Safe to call once."""
+    global _scheduler_task
+    if _scheduler_task is None or _scheduler_task.done():
+        _scheduler_task = asyncio.create_task(_scheduler_loop())
+        logger.info("Background scheduler started")
+
+
+def stop_scheduler() -> None:
+    """Stop the background scheduler task."""
+    global _scheduler_task
+    if _scheduler_task and not _scheduler_task.done():
+        _scheduler_task.cancel()
+        logger.info("Background scheduler stopped")
+    _scheduler_task = None

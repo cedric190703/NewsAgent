@@ -13,21 +13,31 @@ from app.providers.base import LLMProvider
 
 NODE = "planner"
 
-SYSTEM = (
-    "You are a news editor planning research angles. You never invent facts; "
-    "you only produce search queries an assistant will actually run."
-)
-
 FALLBACK_ANGLES = [
     ("recent breakthroughs", "{theme} breakthrough results announced"),
     ("policy and funding", "{theme} policy funding decision"),
     ("research findings", "{theme} peer-reviewed study findings"),
     ("real-world deployment", "{theme} deployment rollout results"),
+    ("market impact", "{theme} market growth investment"),
     ("community impact", "{theme} community impact outcomes"),
     ("tools and launches", "{theme} launch release available"),
     ("risks and criticism", "{theme} criticism concerns audit"),
     ("what changed this week", "{theme} this week update"),
+    ("data and benchmarks", "{theme} data benchmark report statistics"),
 ]
+
+PLANNER_SYSTEM = (
+    "You are a news editor planning research angles. You never invent facts; "
+    "you only produce search queries an assistant will actually run. "
+    "CRITICAL: every query MUST contain the exact theme words — never generate "
+    "a query that could match unrelated topics. "
+    "When a target audience is specified, prioritise angles that surface "
+    "developments most useful and actionable for that audience. "
+    "Diversify angles across these dimensions: breakthroughs/results, "
+    "policy/regulation, market/business impact, research/data, "
+    "practical applications, risks/criticism, and community impact. "
+    "Avoid overlapping angles — each should surface distinct stories."
+)
 
 
 class PlannedSubTopic(BaseModel):
@@ -71,16 +81,26 @@ async def _plan_theme(
             f"{config.date_to or 'now'}.\n"
         )
 
+    audience_line = ""
+    if config.audience.strip():
+        audience_line = (
+            f"Target audience: {config.audience.strip()}\n"
+            "Tailor the angles to surface developments that are most "
+            "useful, actionable, and relevant for this audience.\n"
+        )
+
     user = (
         f"Theme: {theme}\n"
         f"{window}"
+        f"{audience_line}"
         f"Break this theme into exactly {count} distinct research angles.\n"
-        "Rules: angles must not overlap; each query must be a short, literal "
-        "news search string (no boolean operators, no quotes); prefer angles "
-        "likely to surface concrete, verifiable developments."
+        "Rules: angles must not overlap; each query MUST start with the theme "
+        "words and be a short, literal news search string (no boolean operators, "
+        "no quotes); prefer angles likely to surface concrete, verifiable developments. "
+        "Never generate a query that could match unrelated topics."
     )
 
-    parsed = await try_json(provider, SYSTEM, user, PlannerOutput)
+    parsed = await try_json(provider, PLANNER_SYSTEM, user, PlannerOutput)
     if parsed is None or not parsed.subtopics:
         return _fallback(theme, count), False
 

@@ -118,16 +118,22 @@ export function SchedulesPanel({ currentConfig, onRunStarted }: SchedulesPanelPr
                   : "border-dashed border-slate-200 opacity-60 dark:border-slate-700",
               )}
             >
+              {(() => {
+                const fallbackTheme =
+                  typeof schedule.config?.theme === "string" ? schedule.config.theme : "Untitled";
+                return (
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">
-                  {schedule.themes.join(", ") || schedule.config?.theme || "Untitled"}
+                  {schedule.themes.join(", ") || fallbackTheme}
                 </div>
                 <div className="flex items-center gap-1 text-slate-400">
                   <CalendarClock size={11} />
                   <span className="font-mono">{schedule.cron_expr}</span>
-                  <span>· next {formatWhen(schedule.next_run_at)}</span>
+                  <span>· next {formatWhen(schedule.next_run_at ?? null)}</span>
                 </div>
               </div>
+                );
+              })()}
               <button
                 type="button"
                 title="Run now"

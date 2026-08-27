@@ -1,5 +1,5 @@
-import { motion } from "motion/react";
-import { Bookmark, ExternalLink, FileDown, AlertTriangle, Quote, Clock, ChevronDown, ChevronUp } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { Bookmark, ExternalLink, FileDown, AlertTriangle, Quote, Clock, ChevronDown, ChevronUp, X, Maximize2 } from "lucide-react";
 import { useState } from "react";
 
 import type { ArticleSummary, Newsletter, SourceRef } from "../services/api";
@@ -17,23 +17,139 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function ScoreBadge({ score }: { score: number }) {
-  const pct = Math.round(score * 100);
+function ScoreBadge({ scores }: { scores: ArticleSummary["scores"] }) {
+  const pct = Math.round(scores.composite * 100);
   const color =
     pct >= 75 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
     : pct >= 50 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
     : "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300";
-  return <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-bold", color)}>{pct}</span>;
+  return (
+    <span className="group relative inline-flex">
+      <span className={cn("cursor-help rounded-full px-2.5 py-0.5 text-xs font-bold", color)}>
+        {pct}
+      </span>
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs text-white shadow-lg group-hover:block dark:bg-slate-800">
+        <div className="font-bold text-center mb-1">Score Breakdown</div>
+        <div className="text-left space-y-0.5">
+          <div>Overall: {Math.round(scores.composite * 100)}%</div>
+          <div>Relevance: {Math.round(scores.relevance * 100)}%</div>
+          <div>Recency: {Math.round(scores.recency * 100)}%</div>
+          <div>Credibility: {Math.round(scores.credibility * 100)}%</div>
+          <div>Constructive: {Math.round(scores.goodness_valence * 100)}%</div>
+          <div>Signal: {Math.round(scores.goodness_signal * 100)}%</div>
+        </div>
+      </span>
+    </span>
+  );
+}
+
+function ArticleReaderModal({ item, onClose }: { item: ArticleSummary; onClose: () => void }) {
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-slate-900"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-4 z-10 rounded-full bg-white/80 p-2 text-slate-500 shadow-sm backdrop-blur transition hover:bg-white hover:text-slate-700 dark:bg-slate-800/80 dark:hover:bg-slate-800"
+          >
+            <X size={18} />
+          </button>
+
+          {item.image_url && (
+            <div className="relative h-56 w-full overflow-hidden rounded-t-2xl">
+              <img src={item.image_url} alt="" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+            </div>
+          )}
+
+          <div className="p-8">
+            <div className="flex items-start justify-between gap-4">
+              <h2 className="text-xl font-bold leading-tight text-slate-900 dark:text-white">
+                {item.headline}
+              </h2>
+              <ScoreBadge scores={item.scores} />
+            </div>
+
+            <div className="mt-3 flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+              <span className="font-medium text-brand-600 dark:text-brand-400">{item.source_name}</span>
+              {item.published_at && (
+                <>
+                  <span>·</span>
+                  <Clock size={14} />
+                  <span>{formatDate(item.published_at)}</span>
+                </>
+              )}
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-800">
+                {item.summarized_by === "llm" ? "AI-summarized" : "Heuristic"}
+              </span>
+            </div>
+
+            {item.bullets.length > 0 && (
+              <div className="mt-6">
+                <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">Key Points</h3>
+                <ul className="space-y-3">
+                  {item.bullets.map((bullet, i) => (
+                    <li key={i} className="flex gap-3 text-base text-slate-700 dark:text-slate-200">
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-500" />
+                      {bullet}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {item.key_facts.length > 0 && (
+              <div className="mt-6">
+                <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">Key Facts</h3>
+                <div className="space-y-3">
+                  {item.key_facts.map((fact, i) => (
+                    <div key={i} className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{fact.claim}</p>
+                      <div className="mt-2 flex items-start gap-2">
+                        <Quote size={14} className="mt-0.5 flex-shrink-0 text-brand-400" />
+                        <p className="text-sm italic text-slate-500 dark:text-slate-400">{fact.quote}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-8 flex items-center gap-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+              <a href={item.url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
+                <ExternalLink size={15} />
+                Open original article
+              </a>
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
 }
 
 function ArticleCard({
   item,
   onBookmark,
   bookmarked,
+  onExpand,
 }: {
   item: ArticleSummary;
   onBookmark: (a: ArticleSummary) => void;
   bookmarked: boolean;
+  onExpand: (item: ArticleSummary) => void;
 }) {
   return (
     <motion.article
@@ -58,7 +174,7 @@ function ArticleCard({
           <h4 className="text-sm font-bold leading-snug text-slate-800 dark:text-slate-100">
             {item.headline}
           </h4>
-          <ScoreBadge score={item.scores.composite} />
+          <ScoreBadge scores={item.scores} />
         </div>
 
         <div className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
@@ -115,6 +231,13 @@ function ArticleCard({
             Read article
           </a>
           <button
+            onClick={() => onExpand(item)}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 transition hover:text-brand-600 dark:hover:text-brand-400"
+          >
+            <Maximize2 size={13} />
+            Expand
+          </button>
+          <button
             onClick={() => onBookmark(item)}
             className={cn(
               "inline-flex items-center gap-1.5 text-xs font-medium transition",
@@ -160,10 +283,16 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
 
 export function NewsletterView({ newsletter, onBookmark, bookmarkedIds }: NewsletterViewProps) {
   const [showSources, setShowSources] = useState(false);
+  const [expandedItem, setExpandedItem] = useState<ArticleSummary | null>(null);
   const totalArticles = newsletter.sections.reduce((acc, s) => acc + s.items.length, 0);
 
   return (
     <div className="flex flex-col gap-6">
+      <AnimatePresence>
+        {expandedItem && (
+          <ArticleReaderModal item={expandedItem} onClose={() => setExpandedItem(null)} />
+        )}
+      </AnimatePresence>
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -180,11 +309,11 @@ export function NewsletterView({ newsletter, onBookmark, bookmarkedIds }: Newsle
         </p>
 
         <div className="mt-4 flex items-center gap-4 text-xs text-slate-400">
-          <span>{newsletter.sections.length} sections</span>
+          <span title="Number of topic areas the newsletter is divided into">{newsletter.sections.length} sections</span>
           <span>·</span>
-          <span>{totalArticles} articles</span>
+          <span title="Total articles included across all sections">{totalArticles} articles</span>
           <span>·</span>
-          <span>{newsletter.sources.length} sources</span>
+          <span title="Unique source URLs referenced in this newsletter">{newsletter.sources.length} sources</span>
         </div>
 
         {newsletter.degraded && (
@@ -215,7 +344,7 @@ export function NewsletterView({ newsletter, onBookmark, bookmarkedIds }: Newsle
             <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
               {section.title}
             </h3>
-            <span className="text-xs text-slate-400">{section.items.length} stories</span>
+            <span className="text-xs text-slate-400" title="Number of articles in this section">{section.items.length} stories</span>
           </div>
           {section.blurb && (
             <p className="text-sm text-slate-500 dark:text-slate-400">{section.blurb}</p>
@@ -227,6 +356,7 @@ export function NewsletterView({ newsletter, onBookmark, bookmarkedIds }: Newsle
                 item={item}
                 onBookmark={onBookmark}
                 bookmarked={bookmarkedIds.has(item.article_id)}
+                onExpand={setExpandedItem}
               />
             ))}
           </div>

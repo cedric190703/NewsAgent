@@ -1,231 +1,282 @@
-# AI News Agent
+# Good News Agent
 
-A multi-agent news intelligence platform. You give it a theme; it plans research
-angles, searches real sources, scores and curates what it finds, summarises each
-story with **verbatim quotes checked against the fetched article**, cross-checks
-claims between sources, and composes a newsletter you can read, export, or
-schedule.
+A multi-agent news intelligence platform that fetches, filters, scores, fact-checks, and assembles personalized newsletters from web sources and RSS feeds. Built with a Python FastAPI backend, React + Vite frontend, LangGraph orchestration, and local LLM execution via Ollama.
 
-The backend is Python + FastAPI with a [LangGraph](https://langchain-ai.github.io/langgraph/)
-pipeline. The frontend is React + Vite. Model inference runs locally through
-Ollama, behind a provider interface so hosted models can be added later.
+## Workflow Schema
 
 ![AI Newsletter Agent workflow](./medias/Schema-workflow-AI.png)
 
----
+## Features
 
-## Quick start
+### Newsletter Generation Pipeline
 
-The fastest path needs no model, no API keys, and no network:
+- **Planner**: Breaks a theme into diverse research angles (breakthroughs, policy, market, research, applications, risks, community impact) using LLM or heuristic fallback
+- **Research**: Parallel fan-out per sub-topic, fetching from RSS feeds, Tavily, NewsAPI, and custom URLs
+- **Curator**: Scores articles on relevance, recency, credibility, valence (constructive outcomes), and signal (journalistic quality). Blends heuristic + LLM scoring (50/50 for relevance). Cross-subtopic deduplication and source diversity caps
+- **Summarizer**: Parallel per-article summarization with quote-verified key facts
+- **Fact-checker**: Cross-checks claims and flags conflicts between articles
+- **Composer**: Assembles the final newsletter with LLM-written titles, intros, and section blurbs
 
-```bash
-make install
-make demo
+### Batch Generation & Auto-Delivery
+
+- **One-click batch generation**: Create and execute newsletter runs for all groups simultaneously
+- **Auto-theme inference**: Groups without an explicit theme automatically get one inferred from their name
+- **Auto-delivery**: Finished newsletters are immediately published to group feeds and emailed to subscribers — no manual send step required
+- **Background execution**: Batch runs stream in the background; the admin gets immediate feedback with a status message
+- **Run-to-group linking**: Every run is persistently linked to its group, visible in admin history with group name and delivery status badges
+
+### Recurring Schedules (Background Scheduler)
+
+- Create schedules with themes and interval expressions (`hourly`, `daily`, `weekly`, `monthly`, `every Nh`, or cron-like `0 */N * * *`)
+- The scheduler polls every 60 seconds and automatically executes due schedules
+- Each scheduled run generates a newsletter per theme, links it to the matching group, and auto-delivers to subscribers
+- Schedules can be enabled/disabled and deleted from the admin dashboard
+- Runs entirely in the background via an asyncio task started on app startup
+
+### User Registration & Groups
+
+- Multi-step registration flow: Welcome → Details → Profile (multi-select questionnaire) → Review → Done
+- Users select multiple interests per question and are assigned to matching groups
+- Review step shows all selected options and groups before final confirmation
+- Admin can create/delete questions and options via the Admin Dashboard
+- Each option maps to a group name; users can join multiple groups
+- On registration, a secure auth token is generated and stored client-side in localStorage
+
+### Security & Authentication
+
+- **Admin endpoints protected**: All subscriber, group, question, schedule, and run management endpoints require an `X-Admin-Key` header
+- **Subscriber tokens**: Registration generates a cryptographically secure token used for authenticated newsletter feed access
+- **Token-based feed access**: `/api/newsletters/mine` accepts a subscriber token (preferred) or email (legacy fallback)
+- **Unsubscribe mechanism**: Users can self-unsubscribe via `POST /api/unsubscribe` or the unsubscribe link in every email (legal compliance)
+- **Unsubscribe page**: Accessible at `/#/unsubscribe?email=...` with a clean, standalone UI
+
+### Newsletter Delivery
+
+- One combined email per subscriber with content from all their groups, sequentially organized with group labels and dividers
+- Subscribers in a single group receive the standard newsletter
+- Subscribers in multiple groups receive a combined email with all group newsletters
+- Email delivery via Resend API or SMTP fallback
+- Every email includes a personalized unsubscribe link
+
+### Admin Dashboard
+
+- Pipeline orchestration: trigger newsletter generation runs with configurable themes, audiences, tones, lengths, and curation modes
+- **Batch generate**: One-click generation for all groups with auto-theme inference and auto-delivery
+- **Schedule management**: Create, toggle, and delete recurring newsletter schedules
+- Run history with group name badges, delivery status indicators, and newsletter previews
+- Subscriber management with group assignments
+- Question & option management (CRUD for registration questionnaire)
+- Protected by admin key authentication
+
+### User Portal
+
+- Sign-in modal for returning users (email-based, with token stored for future sessions)
+- Registration modal with multi-select checkboxes and review step
+- Newsletter browsing with search and filtering
+- Personalized "My Newsletters" feed based on group memberships
+- Preview/teaser content for non-authenticated visitors
+- Self-service unsubscribe page
+- Dark mode support
+
+## Architecture
+
+```text
+User/Admin (React + Vite)
+    |
+    v
+FastAPI backend
+    |
+    +--> LangGraph pipeline
+    |       +--> Planner (theme -> search angles)
+    |       +--> Research (parallel, per angle)
+    |       +--> Curator (score, rank, select)
+    |       |       +--> widen_queries (retry on thin results)
+    |       +--> Summarizer (parallel, per article)
+    |       +--> Fact-checker (cross-reference claims)
+    |       +--> Composer (assemble newsletter)
+    |
+    +--> Background Scheduler (asyncio task, 60s poll)
+    |       +--> Checks enabled schedules
+    |       +--> Executes due schedules (create runs, generate, deliver)
+    |
+    v
+SQLite storage (runs, subscribers, groups, schedules, questions, deliveries)
+    |
+    v
+Email delivery (Resend / SMTP) with unsubscribe links
 ```
 
-`make demo` runs one full pipeline in your terminal using the offline providers.
-To bring up the actual app:
+## Scoring System
+
+Articles are scored on five independent axes:
+
+| Axis | Description | Weight (Balanced) |
+|------|-------------|-------------------|
+| **Relevance** | Theme-specificity with synonym expansion, title/headline/body keyword density, tangential penalties | 0.38 |
+| **Recency** | Exponential decay with 7-day half-life | 0.12 |
+| **Credibility** | Tiered source reputation (TIER_ONE/TIER_TWO), domain trust markers, HTTPS, content length | 0.15 |
+| **Valence** | Constructive outcome detection (positive vs. negative term lexicon) | 0.17 |
+| **Signal** | Substantive journalism indicators (data, quotes, methodology) vs. hype/clickbait penalties | 0.18 |
+
+Three curation modes adjust the weights:
+- **Balanced**: Default, all axes considered
+- **Uplifting**: Higher valence weight for constructive/positive news
+- **High Signal**: Higher signal and credibility weight, valence excluded
+
+## Tech Stack
+
+- **Backend**: Python, FastAPI, LangGraph, Pydantic, SQLite (aiosqlite)
+- **Frontend**: React, Vite, TypeScript, Tailwind CSS, Framer Motion, Lucide icons
+- **LLM**: Ollama (local) with mock provider fallback
+- **Search**: Tavily API, NewsAPI, RSS feeds (Google News, BBC, Guardian, NYT, Nature, Science, etc.)
+- **Email**: Resend API or SMTP
+- **Deployment**: Docker Compose
+
+## Local Development
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- [Ollama](https://ollama.ai) (for local LLM inference)
+- Docker and Docker Compose (optional, for containerized deployment)
+
+### Backend
 
 ```bash
-make run-backend    # API on http://localhost:8000  (docs at /docs)
-make run-frontend   # UI  on http://localhost:5173
-```
-
-Or with Docker:
-
-```bash
-LLM_PROVIDER=mock docker compose up --build   # no model needed
-docker compose up --build                     # uses Ollama on the host
-```
-
-If you use the Ollama path, pull a model first: `ollama pull mistral`.
-
-<details>
-<summary>Without <code>make</code></summary>
-
-```bash
-# Backend
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
 uvicorn app.main:app --reload
+```
 
-# Frontend
+The API will be available at `http://localhost:8000`.
+
+To test without a local Ollama model:
+
+```bash
+LLM_PROVIDER=mock
+```
+
+To enable live RSS retrieval, add feed URLs to `backend/.env`:
+
+```bash
+RSS_FEEDS=["https://example.com/feed.xml"]
+```
+
+### Frontend
+
+```bash
 cd frontend
 npm install
+cp .env.example .env
 npm run dev
 ```
-</details>
 
----
+The UI will be available at `http://localhost:5173`.
 
-## What it actually does
+### Docker Compose
 
-A run is a directed graph, not a chain of prompts. Stages fan out in parallel
-and rejoin, and a thin result loops back for a broader search.
-
-```text
-                    ┌─────────────┐
-  theme ───────────▶│   Planner   │  theme -> N distinct research angles
-                    └──────┬──────┘
-                           │ fan out, one branch per angle
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-          ┌────────┐  ┌────────┐  ┌────────┐
-          │Research│  │Research│  │Research│   real search providers
-          └────┬───┘  └────┬───┘  └────┬───┘
-               └───────────┼───────────┘  fan in, deduped by canonical URL
-                           ▼
-                    ┌─────────────┐
-                    │   Curator   │  5 scoring axes + a hard topicality gate
-                    └──────┬──────┘
-             too thin ─────┤
-                           │        ┌──────────────┐
-                           ├───────▶│Widen Queries │──┐ (retry, capped)
-                           │        └──────────────┘  │
-                           │◀─────────────────────────┘
-                           │ fan out, one branch per selected article
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │Summarizer│ │Summarizer│ │Summarizer│  every fact needs a real quote
-        └─────┬────┘ └─────┬────┘ └─────┬────┘
-              └────────────┼────────────┘
-                           ▼
-                    ┌─────────────┐
-                    │  Fact-check │  dedupe + flag contradictions (optional)
-                    └──────┬──────┘
-                           ▼
-                    ┌─────────────┐
-                    │  Composer   │  assembles the newsletter
-                    └──────┬──────┘
-                           ▼
-              UI · Markdown · HTML · PDF · schedule
+```bash
+docker compose up --build
 ```
 
-Full detail in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+This starts:
 
-### The guarantees it tries to keep
+- FastAPI backend on `http://localhost:8000`
+- React + Vite frontend on `http://localhost:5173`
+- Ollama on `http://localhost:11434`
 
-- **No invented sources.** The composer only ever sees typed `ArticleSummary`
-  objects, never raw article text, and any URL it emits that was not fetched is
-  stripped before the newsletter ships.
-- **No unverifiable facts.** Each key fact carries a quote that must appear
-  verbatim in the fetched article. Quotes that do not match are dropped, and the
-  newsletter reports how many were removed.
-- **No silent failures.** Every node falls back to a deterministic heuristic if
-  the model is unavailable, so a run degrades instead of crashing — and the
-  output says which parts were heuristic.
-- **No off-topic filler.** A story whose headline and lede never mention the
-  theme cannot be selected, however confidently the model scored it.
+After the Ollama container starts, pull a model before using the default provider:
 
-### Curation dial
-
-Two independent axes are measured on every article, then *weighted* differently
-per mode — so re-ranking a run never means re-fetching it.
-
-| Mode | What it favours |
-|---|---|
-| `uplifting` | constructive outcomes: progress, recovery, solutions |
-| `high_signal` | substantive reporting: specific, sourced, low hype |
-| `balanced` | both, evenly (default) |
-
----
+```bash
+docker compose exec ollama ollama pull mistral:latest
+```
 
 ## Configuration
 
-Everything is environment variables; every one has a working default, so the app
-runs with no `.env` at all. See **[backend/.env.example](backend/.env.example)**
-for the annotated list and **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** for
-the reference.
+Key environment variables (see `backend/.env.example`):
 
-The settings you are most likely to touch:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_PROVIDER` | `ollama` | LLM provider (`ollama` or `mock`) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `mistral:latest` | Model name |
+| `SEARCH_PROVIDERS` | `["auto"]` | Search providers to use |
+| `TAVILY_API_KEY` | — | Tavily search API key |
+| `NEWSAPI_KEY` | — | NewsAPI key |
+| `RESEND_API_KEY` | — | Resend email API key |
+| `SMTP_HOST` | — | SMTP server host (fallback for email) |
+| `ADMIN_PASSWORD` | `admin123` | Admin dashboard password |
+| `SECRET_KEY` | `change-me-in-production` | Secret for signing subscriber tokens |
+| `RELEVANCE_THRESHOLD` | `0.30` | Minimum relevance score for article selection |
+| `RESULTS_PER_SUBTOPIC` | `20` | Max results to fetch per sub-topic |
+| `MAX_SEARCH_ATTEMPTS` | `2` | Retry attempts when results are thin |
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `LLM_PROVIDER` | `ollama` | `mock` runs the full graph with no model |
-| `OLLAMA_MODEL` | `mistral:latest` | Local model name |
-| `SEARCH_PROVIDERS` | `auto` | `auto`, or any of `rss`, `tavily`, `newsapi`, `mock` |
-| `TAVILY_API_KEY` | — | Enables the Tavily provider |
-| `NEWSAPI_KEY` | — | Enables the NewsAPI provider |
-| `RSS_FEEDS` | 8 built-in feeds | Your own feed list (CSV or JSON) |
-| `ENABLE_SCHEDULER` | `true` | Runs saved schedules in the background |
+## API Endpoints
 
-With no API keys the app uses the built-in RSS feeds. `/api/status` reports
-which providers are live, and the UI shows a banner when it is on mock data.
+### Public
 
----
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/runs` | Start a newsletter generation run |
+| `GET` | `/api/runs` | List recent runs (includes group name, delivery count) |
+| `GET` | `/api/runs/{run_id}` | Get run status and newsletter |
+| `GET` | `/api/newsletters` | List completed newsletters |
+| `GET` | `/api/newsletters/mine` | List newsletters for a subscriber (requires `token` or `email` param) |
+| `POST` | `/api/register` | Register a subscriber with questionnaire answers (returns auth token) |
+| `POST` | `/api/unsubscribe` | Unsubscribe by email (no auth required) |
 
-## API
+### Admin (requires `X-Admin-Key` header)
 
-Interactive docs at `http://localhost:8000/docs`. Full reference in
-**[docs/API.md](docs/API.md)**.
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/runs/batch/execute` | Create and execute runs for all groups with auto-delivery |
+| `POST` | `/api/runs/{run_id}/send` | Send newsletter to group subscribers |
+| `GET` | `/api/runs/{run_id}/deliveries` | Check delivery status |
+| `GET` | `/api/subscribers` | List subscribers with group memberships |
+| `POST` | `/api/subscribers` | Add a subscriber |
+| `DELETE` | `/api/subscribers/{id}` | Delete a subscriber |
+| `POST` | `/api/subscribers/{id}/groups/{gid}` | Assign subscriber to group |
+| `DELETE` | `/api/subscribers/{id}/groups/{gid}` | Remove subscriber from group |
+| `GET` | `/api/groups` | List groups |
+| `POST` | `/api/groups` | Create a group (with theme) |
+| `DELETE` | `/api/groups/{id}` | Delete a group |
+| `GET` | `/api/questions` | List registration questions |
+| `POST` | `/api/questions` | Create a question with options |
+| `DELETE` | `/api/questions/{id}` | Delete a question |
+| `GET` | `/api/schedules` | List recurring schedules |
+| `POST` | `/api/schedules` | Create a schedule (themes, cron expression, config) |
+| `PATCH` | `/api/schedules/{id}` | Enable/disable a schedule |
+| `DELETE` | `/api/schedules/{id}` | Delete a schedule |
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/runs` → `GET /api/runs/{id}/stream` | Run with live SSE progress |
-| `POST /api/news/query` | One structured briefing, synchronously |
-| `GET /api/runs/{id}/export/{markdown\|html\|pdf}` | Download a newsletter |
-| `POST /api/schedules` | Recurring newsletters on a cron expression |
-| `POST /api/news/feedback` | Rate a result |
-| `GET /api/health` · `/api/ready` · `/api/status` | Probes and effective config |
+## Repository Structure
 
----
-
-## Development
-
-```bash
-make test     # backend test suite
-make lint     # ruff + tsc
-make fmt      # apply safe lint fixes
+```text
+.
+├── backend/
+│   ├── app/
+│   │   ├── api/           # FastAPI routes (runs, auth, health, news)
+│   │   ├── core/          # Config and settings
+│   │   ├── graph/         # LangGraph pipeline (nodes, scoring, state)
+│   │   ├── providers/     # LLM provider abstraction
+│   │   ├── search/        # Search provider integrations (RSS, Tavily, NewsAPI)
+│   │   └── services/      # Storage, mailer, exporter, scheduler
+│   ├── tests/
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend/
+│   ├── src/
+│   │   ├── components/    # React components (UserView, AdminView, UnsubscribeView, modals)
+│   │   ├── services/      # API client
+│   │   ├── lib/           # Utilities
+│   │   └── styles/        # CSS
+│   ├── Dockerfile
+│   └── package.json
+├── docker-compose.yml
+├── README.md
+└── medias/
 ```
-
-Inspect a run without the UI:
-
-```bash
-cd backend
-python -m app.graph.harness --theme "ocean restoration" --mode uplifting
-python -m app.graph.harness --print-graph          # topology + mermaid
-python -m app.graph.harness --theme "AI safety" --json out.json
-```
-
-`LLM_PROVIDER=mock` is not a stub that returns prose — it reads the JSON schema
-out of the prompt and returns a conforming instance, quoting real sentences from
-the fetched article. Offline runs therefore exercise the same LLM branches a
-real model would. See **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**.
-
----
-
-## Documentation
-
-| Document | Contents |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Graph topology, state, scoring, guarantees |
-| [docs/API.md](docs/API.md) | Every endpoint, with request and response examples |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | All environment variables |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, tests, layout, adding a provider |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Deployment, probes, storage, scheduling, security |
-| [CHANGELOG.md](CHANGELOG.md) | Release history |
-
----
-
-## Status and roadmap
-
-Working today: the full graph, live RSS / Tavily / NewsAPI retrieval, article
-extraction, quote verification, cross-source fact-checking, SSE streaming,
-run history, bookmarks, feedback, Markdown/HTML/PDF export, and cron schedules
-executed by a background scheduler.
-
-Not built yet:
-
-- **RAG over a private knowledge base.** Needs an embedding model and a vector
-  store; the retrieval interface is in place but there is no such provider.
-- **Delivery beyond the browser.** Email and Slack; export and the API exist.
-- **Hosted model providers.** The `LLMProvider` protocol is ready; only Ollama
-  and the mock implement it.
-- **Multi-user accounts.** Everything is currently single-tenant.
-
-## License
-
-No license has been chosen yet; all rights reserved by the author.

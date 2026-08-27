@@ -1,111 +1,119 @@
-import json
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-
-# `NoDecode` stops pydantic-settings from JSON-parsing the raw env value, so the
-# validator below can accept plain CSV (`A,B`) as well as a JSON array.
-StrList = Annotated[list[str], NoDecode]
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "AI News Agent"
-    app_version: str = "0.3.0"
     environment: Literal["local", "test", "production"] = "local"
-    cors_origins: StrList = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
-    # --- observability ---
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    json_logs: bool = False
-
-    # --- LLM ---
     llm_provider: Literal["ollama", "mock"] = "ollama"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "mistral:latest"
     llm_timeout_seconds: int = 60
     llm_max_concurrency: int = 4
-    llm_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
 
     # --- search providers ---
     # "auto" resolves to every provider that has credentials, else the mock.
-    search_providers: StrList = Field(default_factory=lambda: ["auto"])
+    search_providers: list[str] = Field(default_factory=lambda: ["auto"])
     tavily_api_key: str | None = None
     tavily_search_depth: Literal["basic", "advanced"] = "basic"
     newsapi_key: str | None = None
     newsapi_language: str = "en"
-    rss_feeds: StrList = Field(
+    rss_feeds: list[str] = Field(
         default_factory=lambda: [
+            # General news
             "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
             "https://feeds.bbci.co.uk/news/rss.xml",
+            "https://feeds.bbci.co.uk/news/technology/rss.xml",
+            "https://feeds.bbci.co.uk/news/science-environment/rss.xml",
+            "https://feeds.bbci.co.uk/news/health/rss.xml",
             "https://www.theverge.com/rss/index.xml",
             "https://feeds.arstechnica.com/arstechnica/index",
             "https://www.wired.com/feed/rss",
+            "https://www.theguardian.com/world/rss",
+            "https://www.theguardian.com/science/rss",
+            "https://www.theguardian.com/technology/rss",
+            "https://www.theguardian.com/society/health/rss",
+            "https://feeds.reuters.com/reuters/topNews",
+            "https://feeds.reuters.com/reuters/businessNews",
+            "https://feeds.reuters.com/reuters/technologyNews",
+            "https://hnrss.org/frontpage",
+            "https://www.techmeme.com/feed.xml",
+            "https://feeds.feedburner.com/TechCrunch/",
+            "https://www.engadget.com/rss.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",
+            # Science / research
             "https://feeds.nature.com/nature/rss/current",
             "https://science.sciencemag.org/rss/current.xml",
-            "https://www.theguardian.com/world/rss",
+            "https://www.sciencedaily.com/rss/all.xml",
+            "https://www.sciencedaily.com/rss/health_medicine.xml",
+            "https://www.sciencedaily.com/rss/computers_math.xml",
+            "https://phys.org/rss-feed/breaking/",
+            "https://www.eurekalert.org/rss/technology_engineering.xml",
+            "https://www.eurekalert.org/rss/medicine_health.xml",
+            # Space / energy
+            "https://spacenews.com/feed/",
+            # AI / ML focused
+            "https://news.google.com/rss/search?q=AI+artificial+intelligence+machine+learning&hl=en-US&gl=US&ceid=US:en",
+            "https://news.google.com/rss/search?q=AI+healthcare+medical&hl=en-US&gl=US&ceid=US:en",
+            "https://news.google.com/rss/search?q=artificial+intelligence+medicine+hospital&hl=en-US&gl=US&ceid=US:en",
+            # Health / medical focused
+            "https://www.medscape.com/rss/medicalstudents_headlines",
+            "https://www.statnews.com/feed/",
+            "https://www.fiercehealthcare.com/rss/xml",
+            "https://www.healthcareitnews.com/rss.xml",
+            "https://www.mobihealthnews.com/rss.xml",
         ]
     )
 
+    # --- admin ---
+    admin_password: str = "admin123"
+    # Secret key for signing subscriber auth tokens (change in production!)
+    secret_key: str = "change-me-in-production"
+
+    # --- email / mailing list ---
+    # SMTP (optional — used if resend_api_key is not set)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Good News Agent"
+    smtp_use_tls: bool = True
+    # Resend API (preferred — set RESEND_API_KEY to use instead of SMTP)
+    resend_api_key: str = ""
+
     # --- fetching / extraction ---
     source_fetch_timeout_seconds: int = 15
-    http_user_agent: str = "NewsAgent/0.3 (+https://github.com/)"
+    http_user_agent: str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     enable_article_extraction: bool = True
     min_content_chars: int = 400
     max_article_chars: int = 16000
-    max_download_bytes: int = 5_000_000
-    max_concurrent_fetches: int = 8
-    feed_cache_ttl_seconds: int = 300
-    article_cache_ttl_seconds: int = 900
-    # Only enable for tests or a trusted intranet: it disables the SSRF guard.
-    allow_private_fetch_targets: bool = False
 
     # --- graph behaviour ---
-    results_per_subtopic: int = 8
-    min_relevant_results: int = 4
+    results_per_subtopic: int = 20
+    min_relevant_results: int = 2
     max_search_attempts: int = 2
-    relevance_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
-    # How many of the theme's own terms must appear in an article's headline or
-    # lede before it can be selected, whatever the LLM scored it. Capped by how
-    # many terms the theme actually has, and relaxed to 1 on a widened retry.
-    # 0 disables the gate entirely.
-    min_topic_terms: int = Field(default=2, ge=0, le=5)
+    relevance_threshold: float = 0.30
     enable_factcheck: bool = True
-    graph_recursion_limit: int = 50
-
-    # --- scheduler ---
-    enable_scheduler: bool = True
-    scheduler_tick_seconds: int = 60
 
     # --- storage ---
     data_dir: str = "./data"
     checkpoint_db: str = "./data/checkpoints.sqlite"
     runs_db: str = "./data/runs.sqlite"
-    run_history_limit: int = 500
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
-
-    @field_validator("rss_feeds", "cors_origins", "search_providers", mode="before")
-    @classmethod
-    def _parse_list(cls, value: object) -> object:
-        """Accept `A,B` as well as `["A","B"]` — plain CSV is far easier in a .env."""
-
-        if not isinstance(value, str):
-            return value
-        text = value.strip()
-        if not text:
-            return []
-        if text.startswith("["):
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"expected a JSON array or comma-separated list: {exc}") from exc
-        return [item.strip() for item in text.split(",") if item.strip()]
 
 
 @lru_cache
