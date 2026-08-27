@@ -11,6 +11,18 @@ class SearchQuery(BaseModel):
     max_results: int = Field(default=8, ge=1, le=50)
     date_from: datetime | None = None
     date_to: datetime | None = None
+    required_terms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Terms that define the topic, as opposed to the angle. Keyword-matching "
+            "providers (RSS) use these to reject items that are not about the topic."
+        ),
+    )
+    min_required_terms: int = Field(
+        default=0,
+        ge=0,
+        description="How many of `required_terms` an item must contain. 0 disables the check.",
+    )
 
 
 class SearchHit(BaseModel):

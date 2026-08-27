@@ -1,12 +1,16 @@
+"""NewsAPI.org provider. Returns descriptions only, so bodies are back-filled."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import httpx
-
 from app.core.config import settings
+from app.core.http import fetch
+from app.core.logging import get_logger
 from app.search.base import SearchHit, SearchQuery
 from app.search.extract import enrich_hits
+
+log = get_logger(__name__)
 
 API_URL = "https://newsapi.org/v2/everything"
 
@@ -30,21 +34,22 @@ class NewsApiProvider:
             params["to"] = _iso_day(query.date_to)
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.source_fetch_timeout_seconds
-            ) as client:
-                response = await client.get(
-                    API_URL,
-                    params=params,
-                    headers={"X-Api-Key": self._api_key},
-                )
-                response.raise_for_status()
-                data = response.json()
-        except (httpx.HTTPError, ValueError):
+            response = await fetch(
+                API_URL,
+                params=params,
+                headers={"X-Api-Key": self._api_key},
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            log.warning("newsapi search failed", extra={"error": type(exc).__name__})
+            return []
+
+        if data.get("status") == "error":
+            log.warning("newsapi error", extra={"message": data.get("message", "")[:200]})
             return []
 
         hits = [hit for hit in map(self._to_hit, data.get("articles", [])) if hit]
-        # NewsAPI returns descriptions only, so pull the real body text.
         return await enrich_hits(hits)
 
     def _to_hit(self, item: dict) -> SearchHit | None:

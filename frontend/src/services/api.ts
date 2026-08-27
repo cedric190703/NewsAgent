@@ -114,24 +114,24 @@ export interface Topology {
   edges: TopologyEdge[];
 }
 
+export type RunStatus = "running" | "done" | "partial" | "error" | "cancelled";
+
 export interface RunHistoryItem {
   run_id: string;
   config: RunConfig | null;
-  status: string;
+  status: RunStatus | string;
+  error: string | null;
+  source: string;
   created_at: string;
   finished_at: string | null;
 }
 
-export interface RunDetail {
-  run_id: string;
-  config: RunConfig | null;
+export interface RunDetail extends RunHistoryItem {
   newsletter: Newsletter | null;
-  status: string;
-  created_at: string;
-  finished_at: string | null;
 }
 
 export interface Bookmark {
+  run_id: string;
   article_id: string;
   url: string;
   title: string;
@@ -139,28 +139,107 @@ export interface Bookmark {
   created_at: string;
 }
 
+export interface Schedule {
+  schedule_id: string;
+  themes: string[];
+  cron_expr: string;
+  config: RunConfig | null;
+  enabled: boolean;
+  created_at: string;
+  last_run_at: string | null;
+  last_run_id: string | null;
+  next_run_at: string | null;
+}
+
+export interface AppStatus {
+  app_name: string;
+  version: string;
+  environment: string;
+  llm_provider: string;
+  llm_model: string;
+  search_providers: string[];
+  using_real_data: boolean;
+  rss_feeds_count: number;
+  factcheck_enabled: boolean;
+  scheduler_running: boolean;
+}
+
+export interface ValidationIssue {
+  field: string;
+  message: string;
+  type: string;
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
-async function postJSON<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+/**
+ * The API reports validation failures as `{detail, errors: [{field, message}]}`.
+ * Surfacing "theme: String should have at least 3 characters" beats surfacing
+ * the raw JSON blob the previous client threw.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly issues: ValidationIssue[];
+
+  constructor(status: number, message: string, issues: ValidationIssue[] = []) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.issues = issues;
+  }
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  const body = await res.text();
+  try {
+    const parsed = JSON.parse(body);
+    const issues: ValidationIssue[] = Array.isArray(parsed.errors) ? parsed.errors : [];
+    const message = issues.length
+      ? issues.map((issue) => `${issue.field}: ${issue.message}`).join("; ")
+      : (parsed.detail ?? body ?? res.statusText);
+    return new ApiError(res.status, String(message), issues);
+  } catch {
+    return new ApiError(res.status, body || res.statusText);
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, init);
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : "Network request failed");
+  }
+  if (!res.ok) throw await toApiError(res);
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+function getJSON<T>(path: string): Promise<T> {
+  return request<T>(path);
+}
+
+function postJSON<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
 }
 
 async function deleteJSON(path: string): Promise<void> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(await res.text());
+  await request<unknown>(path, { method: "DELETE" });
 }
+
+// --- runs ---------------------------------------------------------------
 
 export async function createRun(config: RunConfig): Promise<CreateRunResponse> {
   return postJSON("/api/runs", config);
@@ -170,20 +249,12 @@ export async function getTopology(): Promise<Topology> {
   return getJSON("/api/graph/topology");
 }
 
-export interface AppStatus {
-  llm_provider: string;
-  llm_model: string;
-  search_providers: string[];
-  using_real_data: boolean;
-  rss_feeds_count: number;
-}
-
 export async function getStatus(): Promise<AppStatus> {
   return getJSON("/api/status");
 }
 
-export async function listRuns(): Promise<RunHistoryItem[]> {
-  return getJSON("/api/runs");
+export async function listRuns(limit = 50): Promise<RunHistoryItem[]> {
+  return getJSON(`/api/runs?limit=${limit}`);
 }
 
 export async function getRun(runId: string): Promise<RunDetail> {
@@ -194,14 +265,22 @@ export async function deleteRun(runId: string): Promise<void> {
   await deleteJSON(`/api/runs/${runId}`);
 }
 
-export async function exportRun(runId: string, fmt: "markdown" | "html" | "pdf"): Promise<Blob> {
+export type ExportFormat = "markdown" | "html" | "pdf";
+
+export async function exportRun(runId: string, fmt: ExportFormat): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/runs/${runId}/export/${fmt}`);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
   return res.blob();
 }
 
+// --- bookmarks ----------------------------------------------------------
+
 export async function listBookmarks(runId: string): Promise<Bookmark[]> {
   return getJSON(`/api/runs/${runId}/bookmarks`);
+}
+
+export async function listAllBookmarks(limit = 200): Promise<Bookmark[]> {
+  return getJSON(`/api/bookmarks?limit=${limit}`);
 }
 
 export async function addBookmark(
@@ -210,8 +289,8 @@ export async function addBookmark(
   url: string,
   title: string,
   sourceName: string,
-): Promise<void> {
-  await postJSON(`/api/runs/${runId}/bookmarks`, {
+): Promise<Bookmark> {
+  return postJSON(`/api/runs/${runId}/bookmarks`, {
     article_id: articleId,
     url,
     title,
@@ -221,6 +300,51 @@ export async function addBookmark(
 
 export async function removeBookmark(runId: string, articleId: string): Promise<void> {
   await deleteJSON(`/api/runs/${runId}/bookmarks/${articleId}`);
+}
+
+// --- schedules ----------------------------------------------------------
+
+export async function listSchedules(): Promise<Schedule[]> {
+  return getJSON("/api/schedules");
+}
+
+export async function createSchedule(
+  themes: string[],
+  cronExpr: string,
+  config: RunConfig,
+): Promise<Schedule> {
+  return postJSON("/api/schedules", { themes, cron_expr: cronExpr, config });
+}
+
+export async function toggleSchedule(scheduleId: string, enabled: boolean): Promise<Schedule> {
+  return patchJSON(`/api/schedules/${scheduleId}`, { enabled });
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<void> {
+  await deleteJSON(`/api/schedules/${scheduleId}`);
+}
+
+export async function runScheduleNow(scheduleId: string): Promise<CreateRunResponse> {
+  return postJSON(`/api/schedules/${scheduleId}/run`);
+}
+
+// --- feedback -----------------------------------------------------------
+
+export interface FeedbackResponse {
+  feedback_id: string;
+  status: string;
+}
+
+export async function submitFeedback(
+  runId: string | null,
+  rating: number,
+  comment?: string,
+): Promise<FeedbackResponse> {
+  return postJSON("/api/news/feedback", {
+    run_id: runId,
+    rating,
+    comment: comment?.trim() || null,
+  });
 }
 
 export function streamRunEvents(

@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.core.text import required_term_count
 from app.graph.llm import try_json
 from app.graph.scoring import (
     MODE_WEIGHTS,
@@ -18,6 +19,7 @@ from app.graph.scoring import (
     recency_score,
     relevance_score,
     signal_score,
+    topical_terms_matched,
     valence_score,
 )
 from app.graph.state import (
@@ -120,10 +122,15 @@ async def curator_node(
             llm_scores.update(result)
 
     scored: list[ScoredArticle] = []
+    # How much of the theme shows up in each headline/lede, kept so an off-topic
+    # article cannot be rescued by a generous model score (see `eligible`).
+    topicality: dict[str, int] = {}
     for article in articles:
         subtopic = subtopic_by_id.get(article.subtopic_id)
         theme = (subtopic.theme if subtopic else config.theme) or config.theme
         query = subtopic.query if subtopic else config.theme
+
+        topicality[article.id] = topical_terms_matched(theme, article)
 
         heuristic = ArticleScores(
             relevance=relevance_score(theme, query, article),
@@ -161,18 +168,35 @@ async def curator_node(
 
     scored.sort(key=lambda item: item.scores.composite, reverse=True)
 
+    # A story whose headline and lede do not mention the topic is off-topic no
+    # matter how confidently the model scored it, so topicality is a hard gate
+    # rather than one more weighted signal.
     threshold = settings.relevance_threshold
-    eligible = [item for item in scored if item.scores.relevance >= threshold]
+    # Mirrors what research asked its providers for, so selection and retrieval
+    # cannot disagree about what "on topic" means.
+    widened = any(subtopic.widened for subtopic in subtopic_by_id.values())
+    floor = required_term_count(config.theme, settings.min_topic_terms, widened)
+
+    def is_on_topic(item: ScoredArticle) -> bool:
+        return topicality.get(item.article.id, 0) >= floor
+
+    def is_eligible(item: ScoredArticle) -> bool:
+        return is_on_topic(item) and item.scores.relevance >= threshold
+
+    eligible = [item for item in scored if is_eligible(item)]
     selected = eligible[: config.target_articles]
     selected_ids = {item.article.id for item in selected}
+    off_topic = sum(1 for item in scored if not is_on_topic(item))
 
     for item in scored:
         if item.article.id in selected_ids:
             item.verdict = "selected"
-        elif item.scores.relevance >= threshold:
+        elif is_eligible(item):
             item.verdict = "backup"
         else:
             item.verdict = "rejected"
+            if not is_on_topic(item):
+                item.reasons.insert(0, "off-topic: theme absent from headline/lede")
 
     mode_weights = MODE_WEIGHTS[config.good_news_mode]
     active_axes = ",".join(k for k, v in mode_weights.items() if v > 0)
@@ -197,6 +221,7 @@ async def curator_node(
                     "eligible": len(eligible),
                     "selected": len(selected),
                     "llm_judged": len(llm_scores),
+                    "off_topic": off_topic,
                 },
             )
         ],

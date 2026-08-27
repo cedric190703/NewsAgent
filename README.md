@@ -1,305 +1,231 @@
 # AI News Agent
 
-AI News Agent is a planned multi-agent news intelligence platform that fetches, filters, analyzes, fact-checks, and formats information from web sources, RSS feeds, and internal knowledge resources. The goal is to let a user ask for news, analysis, or briefings about a topic and receive a professional, structured answer with sources, context, and actionable insights.
+A multi-agent news intelligence platform. You give it a theme; it plans research
+angles, searches real sources, scores and curates what it finds, summarises each
+story with **verbatim quotes checked against the fetched article**, cross-checks
+claims between sources, and composes a newsletter you can read, export, or
+schedule.
 
-The first version will use a Python FastAPI backend, a React + Vite frontend, Docker-based deployment, and local LLM execution through Ollama. The architecture is designed so the model provider can later be extended to OpenRouter or other hosted/free model APIs.
-
-## Workflow Schema
+The backend is Python + FastAPI with a [LangGraph](https://langchain-ai.github.io/langgraph/)
+pipeline. The frontend is React + Vite. Model inference runs locally through
+Ollama, behind a provider interface so hosted models can be added later.
 
 ![AI Newsletter Agent workflow](./medias/Schema-workflow-AI.png)
 
-## Product Vision
+---
 
-The system should behave like a professional AI news analyst:
+## Quick start
 
-- Understand the user's topic, section, intent, and expected output format.
-- Retrieve information from multiple source types.
-- Remove duplicate or low-value content.
-- Score relevance and group related stories.
-- Generate summaries, analysis, key insights, and recommendations.
-- Review the generated answer for factual consistency, tone, and completeness.
-- Deliver the answer through a web UI first, with future support for email newsletters, Slack, exports, and API consumers.
-- Learn from user feedback to improve future responses.
-
-## High-Level Architecture
-
-```text
-User request
-    |
-    v
-React + Vite frontend
-    |
-    v
-FastAPI backend
-    |
-    v
-Orchestrator agent
-    |
-    +--> Web search agent
-    +--> RSS/feed agent
-    +--> RAG/knowledge-base agent
-    |
-    v
-Content processor
-    |
-    +--> Deduplication
-    +--> Relevance scoring
-    +--> Topic clustering
-    +--> Source normalization
-    |
-    v
-Writer agent
-    |
-    v
-Critic agent
-    |
-    v
-Final response formatter
-    |
-    v
-Web/chat UI, newsletter, API, Slack, or export
-```
-
-## Main Components
-
-### Frontend
-
-The frontend will be built with React and Vite. It should provide a clean professional interface where users can:
-
-- Submit a topic, section, or question.
-- Choose the expected output type: short answer, briefing, newsletter, analysis, or source list.
-- Configure source preferences.
-- View generated answers with source citations.
-- Provide feedback on answer quality.
-
-### Backend API
-
-The backend will be built with Python and FastAPI. It will expose the application API, validate requests, manage agent execution, and return structured responses to the UI.
-
-Expected responsibilities:
-
-- Request validation and response formatting.
-- Agent orchestration.
-- Source ingestion.
-- Content processing.
-- LLM provider abstraction.
-- Job status tracking for longer generation tasks.
-- Storage integration for sources, generated answers, and feedback.
-
-### Agent Pipeline
-
-The agent pipeline is the core intelligence layer.
-
-- **Orchestrator agent**: parses user intent, selects the right agents, and routes work.
-- **Web search agent**: fetches current public web information.
-- **RSS/feed agent**: collects content from configured feeds.
-- **RAG/knowledge-base agent**: retrieves internal or saved reference material.
-- **Content processor**: deduplicates, ranks, clusters, and normalizes retrieved content.
-- **Writer agent**: produces summaries, analysis, key insights, and professional final drafts.
-- **Critic agent**: reviews factual accuracy, tone, missing context, and answer quality.
-- **Feedback loop**: captures user feedback for future improvements.
-
-### AI Model Layer
-
-The first implementation should use Ollama for local model inference.
-
-The model layer should be implemented behind a provider interface so future providers can be added without rewriting the pipeline:
-
-- Ollama for local development and privacy-friendly execution.
-- OpenRouter as a future hosted multi-model gateway.
-- Other free or low-cost model APIs if they fit the project requirements.
-
-### Docker
-
-Docker will be used to containerize the application and make local development reproducible.
-
-The expected setup is:
-
-- One backend container for FastAPI.
-- One frontend container for React + Vite.
-- Optional database/vector database containers.
-- Optional Ollama container or connection to a host-running Ollama service.
-
-## Proposed Repository Structure
-
-```text
-.
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   ├── agents/
-│   │   ├── core/
-│   │   ├── models/
-│   │   ├── providers/
-│   │   ├── schemas/
-│   │   └── services/
-│   ├── tests/
-│   ├── Dockerfile
-│   └── pyproject.toml
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── services/
-│   │   └── styles/
-│   ├── Dockerfile
-│   └── package.json
-├── docker-compose.yml
-├── README.md
-└── Schema-workflow-AI.png
-```
-
-## Initial API Direction
-
-The first backend API can start small:
-
-- `POST /api/news/query`: submit a user topic or question.
-- `GET /api/news/jobs/{job_id}`: check long-running generation status.
-- `GET /api/news/results/{result_id}`: retrieve a generated answer.
-- `POST /api/feedback`: submit user feedback.
-- `GET /api/health`: health check for Docker and deployment.
-
-## Response Format Goal
-
-Generated answers should be professional and structured. A typical response should include:
-
-- Executive summary.
-- Key points.
-- Detailed analysis.
-- Source list with links and timestamps when available.
-- Confidence or quality notes.
-- Suggested follow-up questions.
-
-## Implementation Plan
-
-### Phase 1: Project Foundation
-
-- Create the backend FastAPI project.
-- Create the frontend React + Vite project.
-- Add Dockerfiles and `docker-compose.yml`.
-- Add environment configuration for local development.
-- Add a basic health check endpoint.
-
-### Phase 2: Core AI Pipeline
-
-- Implement the orchestrator agent.
-- Add an Ollama provider abstraction.
-- Define shared request and response schemas.
-- Implement a first writer agent that can answer from provided context.
-- Add a critic agent for answer review.
-
-### Phase 3: Source Retrieval
-
-- Add RSS/feed ingestion.
-- Add web search integration.
-- Add content extraction and normalization.
-- Add deduplication and relevance scoring.
-- Store source metadata for citations.
-
-### Phase 4: RAG and Knowledge Base
-
-- Add document ingestion.
-- Add embeddings and vector search.
-- Connect retrieved knowledge to the agent pipeline.
-- Support local project resources as trusted context.
-
-### Phase 5: Frontend Experience
-
-- Build the query/chat interface.
-- Display structured answers and citations.
-- Add loading, error, and empty states.
-- Add feedback controls.
-- Add settings for model/source preferences.
-
-### Phase 6: Delivery Channels
-
-- Add newsletter generation.
-- Add export formats.
-- Add optional Slack/API delivery.
-- Add scheduled briefings.
-
-### Phase 7: Provider Expansion
-
-- Add OpenRouter provider support.
-- Add provider selection by environment variable.
-- Add model fallback behavior.
-- Add cost and rate-limit safeguards.
-
-## Validation Needed
-
-Before implementation, the main decisions to validate are:
-
-- Which first source type should be implemented: RSS feeds, web search, or local knowledge base.
-- Whether generated answers should be synchronous at first or use background jobs from the beginning.
-- Which database should be used for stored results and feedback.
-- Which vector store should be used for RAG.
-- Whether Ollama should run inside Docker or separately on the host machine.
-- Which output format should be the first priority: chat answer, newsletter, API response, or export.
-
-## Local Development
-
-### Backend
+The fastest path needs no model, no API keys, and no network:
 
 ```bash
+make install
+make demo
+```
+
+`make demo` runs one full pipeline in your terminal using the offline providers.
+To bring up the actual app:
+
+```bash
+make run-backend    # API on http://localhost:8000  (docs at /docs)
+make run-frontend   # UI  on http://localhost:5173
+```
+
+Or with Docker:
+
+```bash
+LLM_PROVIDER=mock docker compose up --build   # no model needed
+docker compose up --build                     # uses Ollama on the host
+```
+
+If you use the Ollama path, pull a model first: `ollama pull mistral`.
+
+<details>
+<summary>Without <code>make</code></summary>
+
+```bash
+# Backend
 cd backend
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
 uvicorn app.main:app --reload
-```
 
-The API will be available at `http://localhost:8000`.
-
-To test the backend without a local Ollama model, set:
-
-```bash
-LLM_PROVIDER=mock
-```
-
-To enable live RSS retrieval, add feed URLs to `backend/.env`:
-
-```bash
-RSS_FEEDS=["https://example.com/feed.xml"]
-```
-
-### Frontend
-
-```bash
+# Frontend
 cd frontend
 npm install
-cp .env.example .env
 npm run dev
 ```
+</details>
 
-The UI will be available at `http://localhost:5173`.
+---
 
-### Docker Compose
+## What it actually does
 
-```bash
-docker compose up --build
+A run is a directed graph, not a chain of prompts. Stages fan out in parallel
+and rejoin, and a thin result loops back for a broader search.
+
+```text
+                    ┌─────────────┐
+  theme ───────────▶│   Planner   │  theme -> N distinct research angles
+                    └──────┬──────┘
+                           │ fan out, one branch per angle
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+          ┌────────┐  ┌────────┐  ┌────────┐
+          │Research│  │Research│  │Research│   real search providers
+          └────┬───┘  └────┬───┘  └────┬───┘
+               └───────────┼───────────┘  fan in, deduped by canonical URL
+                           ▼
+                    ┌─────────────┐
+                    │   Curator   │  5 scoring axes + a hard topicality gate
+                    └──────┬──────┘
+             too thin ─────┤
+                           │        ┌──────────────┐
+                           ├───────▶│Widen Queries │──┐ (retry, capped)
+                           │        └──────────────┘  │
+                           │◀─────────────────────────┘
+                           │ fan out, one branch per selected article
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │Summarizer│ │Summarizer│ │Summarizer│  every fact needs a real quote
+        └─────┬────┘ └─────┬────┘ └─────┬────┘
+              └────────────┼────────────┘
+                           ▼
+                    ┌─────────────┐
+                    │  Fact-check │  dedupe + flag contradictions (optional)
+                    └──────┬──────┘
+                           ▼
+                    ┌─────────────┐
+                    │  Composer   │  assembles the newsletter
+                    └──────┬──────┘
+                           ▼
+              UI · Markdown · HTML · PDF · schedule
 ```
 
-This starts:
+Full detail in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-- FastAPI backend on `http://localhost:8000`
-- React + Vite frontend on `http://localhost:5173`
-- Ollama on `http://localhost:11434`
+### The guarantees it tries to keep
 
-After the Ollama container starts, pull a model before using the default provider:
+- **No invented sources.** The composer only ever sees typed `ArticleSummary`
+  objects, never raw article text, and any URL it emits that was not fetched is
+  stripped before the newsletter ships.
+- **No unverifiable facts.** Each key fact carries a quote that must appear
+  verbatim in the fetched article. Quotes that do not match are dropped, and the
+  newsletter reports how many were removed.
+- **No silent failures.** Every node falls back to a deterministic heuristic if
+  the model is unavailable, so a run degrades instead of crashing — and the
+  output says which parts were heuristic.
+- **No off-topic filler.** A story whose headline and lede never mention the
+  theme cannot be selected, however confidently the model scored it.
+
+### Curation dial
+
+Two independent axes are measured on every article, then *weighted* differently
+per mode — so re-ranking a run never means re-fetching it.
+
+| Mode | What it favours |
+|---|---|
+| `uplifting` | constructive outcomes: progress, recovery, solutions |
+| `high_signal` | substantive reporting: specific, sourced, low hype |
+| `balanced` | both, evenly (default) |
+
+---
+
+## Configuration
+
+Everything is environment variables; every one has a working default, so the app
+runs with no `.env` at all. See **[backend/.env.example](backend/.env.example)**
+for the annotated list and **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** for
+the reference.
+
+The settings you are most likely to touch:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_PROVIDER` | `ollama` | `mock` runs the full graph with no model |
+| `OLLAMA_MODEL` | `mistral:latest` | Local model name |
+| `SEARCH_PROVIDERS` | `auto` | `auto`, or any of `rss`, `tavily`, `newsapi`, `mock` |
+| `TAVILY_API_KEY` | — | Enables the Tavily provider |
+| `NEWSAPI_KEY` | — | Enables the NewsAPI provider |
+| `RSS_FEEDS` | 8 built-in feeds | Your own feed list (CSV or JSON) |
+| `ENABLE_SCHEDULER` | `true` | Runs saved schedules in the background |
+
+With no API keys the app uses the built-in RSS feeds. `/api/status` reports
+which providers are live, and the UI shows a banner when it is on mock data.
+
+---
+
+## API
+
+Interactive docs at `http://localhost:8000/docs`. Full reference in
+**[docs/API.md](docs/API.md)**.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/runs` → `GET /api/runs/{id}/stream` | Run with live SSE progress |
+| `POST /api/news/query` | One structured briefing, synchronously |
+| `GET /api/runs/{id}/export/{markdown\|html\|pdf}` | Download a newsletter |
+| `POST /api/schedules` | Recurring newsletters on a cron expression |
+| `POST /api/news/feedback` | Rate a result |
+| `GET /api/health` · `/api/ready` · `/api/status` | Probes and effective config |
+
+---
+
+## Development
 
 ```bash
-docker compose exec ollama ollama pull llama3.1
+make test     # backend test suite
+make lint     # ruff + tsc
+make fmt      # apply safe lint fixes
 ```
 
-## Current Status
+Inspect a run without the UI:
 
-The project now contains a first runnable codebase:
+```bash
+cd backend
+python -m app.graph.harness --theme "ocean restoration" --mode uplifting
+python -m app.graph.harness --print-graph          # topology + mermaid
+python -m app.graph.harness --theme "AI safety" --json out.json
+```
 
-- FastAPI backend with health, query, and feedback endpoints.
-- Agent pipeline with orchestrator, configurable RSS, web, RAG, processor, writer, critic, and formatter layers.
-- Ollama provider abstraction with a mock provider for local testing.
-- React + Vite frontend for submitting news requests and reading structured results.
-- Dockerfiles and `docker-compose.yml`.
+`LLM_PROVIDER=mock` is not a stub that returns prose — it reads the JSON schema
+out of the prompt and returns a conforming instance, quoting real sentences from
+the fetched article. Offline runs therefore exercise the same LLM branches a
+real model would. See **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**.
 
-The next implementation step is to replace placeholder web search and RAG agents with live integrations, then add persistence for generated results and feedback.
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Graph topology, state, scoring, guarantees |
+| [docs/API.md](docs/API.md) | Every endpoint, with request and response examples |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | All environment variables |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, tests, layout, adding a provider |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Deployment, probes, storage, scheduling, security |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+---
+
+## Status and roadmap
+
+Working today: the full graph, live RSS / Tavily / NewsAPI retrieval, article
+extraction, quote verification, cross-source fact-checking, SSE streaming,
+run history, bookmarks, feedback, Markdown/HTML/PDF export, and cron schedules
+executed by a background scheduler.
+
+Not built yet:
+
+- **RAG over a private knowledge base.** Needs an embedding model and a vector
+  store; the retrieval interface is in place but there is no such provider.
+- **Delivery beyond the browser.** Email and Slack; export and the API exist.
+- **Hosted model providers.** The `LLMProvider` protocol is ready; only Ollama
+  and the mock implement it.
+- **Multi-user accounts.** Everything is currently single-tenant.
+
+## License
+
+No license has been chosen yet; all rights reserved by the author.

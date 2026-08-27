@@ -1,5 +1,4 @@
 from app.schemas.news import (
-    FeedbackRequest,
     NewsQueryRequest,
     NewsQueryResponse,
     NewsSource,
@@ -8,7 +7,6 @@ from app.schemas.news import (
 )
 
 __all__ = [
-    "FeedbackRequest",
     "NewsQueryRequest",
     "NewsQueryResponse",
     "NewsSource",

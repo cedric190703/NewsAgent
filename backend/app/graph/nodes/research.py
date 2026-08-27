@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.config import settings
+from app.core.text import required_term_count
 from app.graph.state import (
     NewsletterState,
     RawArticle,
@@ -45,11 +46,16 @@ async def research_node(task: ResearchTask) -> dict[str, Any]:
     subtopic: SubTopic = task["subtopic"]
     providers = get_providers(config.providers)
 
+    theme = subtopic.theme or config.theme
     query = SearchQuery(
         query=subtopic.query,
         max_results=settings.results_per_subtopic,
         date_from=config.date_from,
         date_to=config.date_to,
+        required_terms=theme.split(),
+        min_required_terms=required_term_count(
+            theme, settings.min_topic_terms, subtopic.widened
+        ),
     )
 
     try:

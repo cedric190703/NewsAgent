@@ -5,8 +5,12 @@ services:
     env_file:
       - ./backend/.env.example
     environment:
+      # Talks to an Ollama running on the host, not in a container.
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: mistral:latest
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral:latest}
+      # Set LLM_PROVIDER=mock to run the whole stack with no model at all.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      DATA_DIR: /app/data
     ports:
       - "8000:8000"
     volumes:
@@ -18,14 +22,13 @@ services:
   frontend:
     build:
       context: ./frontend
-    env_file:
-      - ./frontend/.env.example
     environment:
       VITE_PROXY_TARGET: http://backend:8000
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

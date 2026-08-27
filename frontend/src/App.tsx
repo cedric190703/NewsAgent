@@ -17,11 +17,14 @@ import {
   Wifi,
   WifiOff,
   Database,
+  CalendarClock,
 } from "lucide-react";
 
 import {
+  ApiError,
   type ArticleSummary,
   type AppStatus,
+  type ExportFormat,
   type GoodNewsMode,
   type Length,
   type Newsletter,
@@ -36,6 +39,7 @@ import {
   getRun,
   getStatus,
   getTopology,
+  listBookmarks,
   listRuns,
   removeBookmark,
   streamRunEvents,
@@ -43,6 +47,8 @@ import {
 } from "./services/api";
 import { PipelineView } from "./components/PipelineView";
 import { NewsletterView } from "./components/NewsletterView";
+import { SchedulesPanel } from "./components/SchedulesPanel";
+import { FeedbackBar } from "./components/FeedbackBar";
 import { DotPattern } from "./components/ui/dot-pattern";
 import { AnimatedGradientText } from "./components/ui/animated-gradient-text";
 import { ShimmerButton } from "./components/ui/shimmer-button";
@@ -69,6 +75,21 @@ const LENGTHS: { value: Length; label: string }[] = [
   { value: "deep", label: "Deep" },
 ];
 
+const STATUS_COLOR: Record<string, string> = {
+  done: "text-emerald-600 dark:text-emerald-400",
+  running: "text-brand-600 dark:text-brand-400",
+  partial: "text-amber-600 dark:text-amber-400",
+  error: "text-red-500",
+  cancelled: "text-slate-400",
+};
+
+/** ApiError already carries a readable per-field message; fall back for the rest. */
+function describeError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
+
 export function App() {
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem("dark-mode");
@@ -93,6 +114,7 @@ export function App() {
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<RunHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSchedules, setShowSchedules] = useState(false);
   const [activeTab, setActiveTab] = useState<"pipeline" | "newsletter">("pipeline");
   const [status, setStatus] = useState<AppStatus | null>(null);
 
@@ -116,23 +138,37 @@ export function App() {
     async (article: ArticleSummary) => {
       if (!runId) return;
       const id = article.article_id;
-      if (bookmarkedIds.has(id)) {
-        await removeBookmark(runId, id);
+      const saved = bookmarkedIds.has(id);
+
+      // Update optimistically, then roll back if the server disagrees.
+      setBookmarkedIds((prev) => {
+        const next = new Set(prev);
+        if (saved) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+
+      try {
+        if (saved) {
+          await removeBookmark(runId, id);
+        } else {
+          await addBookmark(runId, id, article.url, article.headline, article.source_name);
+        }
+      } catch (err) {
         setBookmarkedIds((prev) => {
           const next = new Set(prev);
-          next.delete(id);
+          if (saved) next.add(id);
+          else next.delete(id);
           return next;
         });
-      } else {
-        await addBookmark(runId, id, article.url, article.headline, article.source_name);
-        setBookmarkedIds((prev) => new Set(prev).add(id));
+        setError(describeError(err, "Could not update the bookmark"));
       }
     },
     [runId, bookmarkedIds],
   );
 
   const handleExport = useCallback(
-    async (fmt: "markdown" | "html" | "pdf") => {
+    async (fmt: ExportFormat) => {
       if (!runId) return;
       try {
         const blob = await exportRun(runId, fmt);
@@ -143,7 +179,7 @@ export function App() {
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Export failed");
+        setError(describeError(err, "Export failed"));
       }
     },
     [runId],
@@ -159,18 +195,8 @@ export function App() {
     setBookmarkedIds(new Set());
     setActiveTab("pipeline");
 
-    const config: RunConfig = {
-      theme: theme.trim(),
-      good_news_mode: mode,
-      tone,
-      length,
-      subtopic_count: subtopicCount,
-      max_sources: maxSources,
-      enable_factcheck: factcheck,
-    };
-
     try {
-      const { run_id } = await createRun(config);
+      const { run_id } = await createRun(currentConfig);
       setRunId(run_id);
       setStreaming(true);
       refreshHistory();
@@ -191,7 +217,7 @@ export function App() {
         },
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start run");
+      setError(describeError(err, "Failed to start run"));
       setStreaming(false);
     }
   };
@@ -203,17 +229,25 @@ export function App() {
 
   const loadHistoryRun = async (id: string) => {
     try {
-      const detail = await getRun(id);
+      // Bookmarks are per-run and stored server-side, so a loaded run has to
+      // fetch its own — otherwise every saved article looked unsaved.
+      const [detail, bookmarks] = await Promise.all([getRun(id), listBookmarks(id)]);
       setRunId(id);
+      setBookmarkedIds(new Set(bookmarks.map((bookmark) => bookmark.article_id)));
       if (detail.newsletter) {
         setNewsletter(detail.newsletter);
         setActiveTab("newsletter");
+      } else {
+        setNewsletter(null);
+        setActiveTab("pipeline");
+        setError(
+          detail.error ?? `This run finished with status "${detail.status}" and has no newsletter.`,
+        );
       }
       setEvents([]);
-      setError(null);
       setShowHistory(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load run");
+      setError(describeError(err, "Failed to load run"));
     }
   };
 
@@ -224,6 +258,37 @@ export function App() {
     } catch {
       // ignore
     }
+  };
+
+  const currentConfig: RunConfig = {
+    theme: theme.trim(),
+    good_news_mode: mode,
+    tone,
+    length,
+    subtopic_count: subtopicCount,
+    max_sources: maxSources,
+    enable_factcheck: factcheck,
+  };
+
+  const startStreaming = (id: string) => {
+    setRunId(id);
+    setStreaming(true);
+    setEvents([]);
+    setNewsletter(null);
+    setActiveTab("pipeline");
+    abortRef.current = streamRunEvents(
+      id,
+      (evt) => setEvents((prev) => [...prev, evt]),
+      (nl) => {
+        setNewsletter(nl);
+        setActiveTab("newsletter");
+      },
+      (msg) => setError(msg),
+      () => {
+        setStreaming(false);
+        refreshHistory();
+      },
+    );
   };
 
   const totalArticles = newsletter?.sections.reduce((acc, s) => acc + s.items.length, 0) ?? 0;
@@ -448,9 +513,31 @@ export function App() {
           )}
 
           <div className="relative mt-auto flex items-center gap-2">
-            <button onClick={() => { refreshHistory(); setShowHistory(!showHistory); }} className="btn-ghost">
+            <button
+              onClick={() => {
+                refreshHistory();
+                setShowHistory(!showHistory);
+                setShowSchedules(false);
+              }}
+              className={cn("btn-ghost", showHistory && "bg-slate-100 dark:bg-slate-800")}
+            >
               <History size={15} />
               History
+            </button>
+            <button
+              onClick={() => {
+                setShowSchedules(!showSchedules);
+                setShowHistory(false);
+              }}
+              className={cn("btn-ghost", showSchedules && "bg-slate-100 dark:bg-slate-800")}
+              title={
+                status?.scheduler_running
+                  ? "Recurring newsletters run on the server"
+                  : "The server scheduler is disabled"
+              }
+            >
+              <CalendarClock size={15} />
+              Schedules
             </button>
             {newsletter && runId && (
               <div className="ml-auto flex items-center gap-1">
@@ -486,13 +573,19 @@ export function App() {
                     >
                       <button
                         onClick={() => loadHistoryRun(item.run_id)}
-                        className="flex-1 text-left transition hover:text-brand-600"
+                        className="min-w-0 flex-1 text-left transition hover:text-brand-600"
                       >
-                        <div className="font-medium truncate">
+                        <div className="truncate font-medium">
                           {item.config?.theme ?? "Untitled"}
                         </div>
-                        <div className="text-slate-400">
-                          {new Date(item.created_at).toLocaleDateString()} · {item.status}
+                        <div className="flex items-center gap-1.5 text-slate-400">
+                          <span>{new Date(item.created_at).toLocaleDateString()}</span>
+                          <span className={cn("font-medium", STATUS_COLOR[item.status])}>
+                            {item.status}
+                          </span>
+                          {item.source.startsWith("schedule:") && (
+                            <CalendarClock size={10} aria-label="scheduled run" />
+                          )}
                         </div>
                       </button>
                       <button
@@ -504,6 +597,19 @@ export function App() {
                     </div>
                   ))
                 )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {showSchedules && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="relative overflow-hidden"
+              >
+                <SchedulesPanel currentConfig={currentConfig} onRunStarted={startStreaming} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -592,12 +698,14 @@ export function App() {
                 )}
               </div>
             ) : newsletter ? (
-              <NewsletterView
-                newsletter={newsletter}
-                runId={runId ?? ""}
-                onBookmark={handleBookmark}
-                bookmarkedIds={bookmarkedIds}
-              />
+              <div className="flex flex-col gap-6">
+                <NewsletterView
+                  newsletter={newsletter}
+                  onBookmark={handleBookmark}
+                  bookmarkedIds={bookmarkedIds}
+                />
+                {runId && !streaming && <FeedbackBar key={runId} runId={runId} />}
+              </div>
             ) : (
               <div className="grid place-items-center py-20 text-center">
                 <div className="flex flex-col items-center gap-3 text-slate-400">
