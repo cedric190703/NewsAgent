@@ -147,13 +147,26 @@ export interface Bookmark {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  const body = await res.text();
+  const message = body || res.statusText || "Request failed";
+  return new ApiError(res.status, message);
+}
+
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
   return res.json();
 }
 
@@ -161,13 +174,13 @@ async function getJSON<T>(path: string, adminKey?: string): Promise<T> {
   const headers: Record<string, string> = {};
   if (adminKey) headers["X-Admin-Key"] = adminKey;
   const res = await fetch(`${API_BASE}${path}`, { headers });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
   return res.json();
 }
 
 async function deleteJSON(path: string): Promise<void> {
   const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
 }
 
 export async function createRun(config: RunConfig, adminKey?: string): Promise<CreateRunResponse> {
@@ -563,46 +576,80 @@ export interface Schedule {
   enabled: boolean;
   created_at: string;
   last_run_at: string | null;
+  next_run_at?: string | null;
 }
 
-export async function listSchedules(adminKey: string): Promise<Schedule[]> {
+export async function listSchedules(adminKey?: string): Promise<Schedule[]> {
   return getJSON("/api/schedules", adminKey);
 }
 
 export async function createSchedule(
   themes: string[],
   cronExpr: string,
-  config: Record<string, unknown>,
-  adminKey: string,
+  config: Record<string, unknown> | RunConfig,
+  adminKey?: string,
 ): Promise<{ schedule_id: string; status: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
   const res = await fetch(`${API_BASE}/api/schedules`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    headers,
     body: JSON.stringify({ themes, cron_expr: cronExpr, config }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
   return res.json();
 }
 
 export async function toggleSchedule(
   scheduleId: string,
   enabled: boolean,
-  adminKey: string,
+  adminKey?: string,
 ): Promise<{ status: string }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
   const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "X-Admin-Key": adminKey },
+    headers,
     body: JSON.stringify({ enabled }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
   return res.json();
 }
 
-export async function deleteSchedule(scheduleId: string, adminKey: string): Promise<{ status: string }> {
+export async function deleteSchedule(scheduleId: string, adminKey?: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
   const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}`, {
     method: "DELETE",
-    headers: { "X-Admin-Key": adminKey },
+    headers,
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toApiError(res);
+}
+
+export async function runScheduleNow(
+  scheduleId: string,
+  adminKey?: string,
+): Promise<{ run_id: string; status: string }> {
+  const headers: Record<string, string> = {};
+  if (adminKey) headers["X-Admin-Key"] = adminKey;
+  const res = await fetch(`${API_BASE}/api/schedules/${scheduleId}/run`, {
+    method: "POST",
+    headers,
+  });
+  if (!res.ok) throw await toApiError(res);
   return res.json();
+}
+
+export async function submitFeedback(
+  runId: string,
+  rating: number,
+  comment?: string,
+  articleId?: string,
+): Promise<{ feedback_id: string }> {
+  return postJSON("/api/news/feedback", {
+    run_id: runId,
+    rating,
+    comment: comment || null,
+    article_id: articleId || null,
+  });
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -11,9 +12,12 @@ from uuid import uuid4
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.graph.builder import build_graph
 from app.graph.state import NewsletterState, NodeEvent, RunConfig, initial_state
 from app.providers.base import LLMProvider
+
+log = get_logger(__name__)
 
 
 def _ensure_data_dir() -> None:
@@ -31,6 +35,7 @@ async def checkpointer_context(persistent: bool = True):
     try:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     except ImportError:
+        log.warning("langgraph-checkpoint-sqlite missing; runs will not be resumable")
         yield MemorySaver()
         return
 
@@ -60,9 +65,19 @@ async def stream_run(
         graph = build_graph(provider=provider, checkpointer=checkpointer)
         runnable_config = {
             "configurable": {"thread_id": run_id},
-            "recursion_limit": 50,
+            "recursion_limit": settings.graph_recursion_limit,
         }
         payload = None if resume else initial_state(run_id, config)
+        started = time.perf_counter()
+        log.info(
+            "graph run starting",
+            extra={
+                "run": run_id,
+                "theme": config.theme,
+                "mode": config.good_news_mode.value,
+                "resume": resume,
+            },
+        )
 
         async for chunk in graph.astream(
             payload,
@@ -71,6 +86,11 @@ async def stream_run(
         ):
             for node, update in chunk.items():
                 yield node, update
+
+        log.info(
+            "graph run complete",
+            extra={"run": run_id, "seconds": round(time.perf_counter() - started, 2)},
+        )
 
 
 async def run_to_completion(
@@ -84,7 +104,10 @@ async def run_to_completion(
         graph = build_graph(provider=provider, checkpointer=checkpointer)
         result = await graph.ainvoke(
             initial_state(run_id, config),
-            config={"configurable": {"thread_id": run_id}, "recursion_limit": 50},
+            config={
+                "configurable": {"thread_id": run_id},
+                "recursion_limit": settings.graph_recursion_limit,
+            },
         )
     return result  # type: ignore[return-value]
 

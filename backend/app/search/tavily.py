@@ -1,11 +1,16 @@
+"""Tavily news search provider."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
-
-import httpx
+from urllib.parse import urlsplit
 
 from app.core.config import settings
+from app.core.http import fetch
+from app.core.logging import get_logger
 from app.search.base import SearchHit, SearchQuery
+
+log = get_logger(__name__)
 
 API_URL = "https://api.tavily.com/search"
 
@@ -18,7 +23,6 @@ class TavilyProvider:
 
     async def search(self, query: SearchQuery) -> list[SearchHit]:
         payload: dict[str, object] = {
-            "api_key": self._api_key,
             "query": query.query,
             "topic": "news",
             "search_depth": settings.tavily_search_depth,
@@ -31,22 +35,27 @@ class TavilyProvider:
             payload["days"] = days
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.source_fetch_timeout_seconds
-            ) as client:
-                response = await client.post(API_URL, json=payload)
-                response.raise_for_status()
-                data = response.json()
-        except (httpx.HTTPError, ValueError):
+            response = await fetch(
+                API_URL,
+                method="POST",
+                json=payload,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            log.warning("tavily search failed", extra={"error": type(exc).__name__})
             return []
 
-        return [hit for hit in map(self._to_hit, data.get("results", [])) if hit]
+        hits = [hit for hit in map(self._to_hit, data.get("results", [])) if hit]
+        log.debug("tavily hits", extra={"query": query.query, "count": len(hits)})
+        return hits
 
     def _days_window(self, query: SearchQuery) -> int | None:
         if query.date_from is None:
             return None
         reference = query.date_to or datetime.now(timezone.utc)
-        delta = reference - _aware(query.date_from)
+        delta = _aware(reference) - _aware(query.date_from)
         return max(1, min(365, delta.days))
 
     def _to_hit(self, item: dict) -> SearchHit | None:
@@ -72,8 +81,6 @@ def _aware(value: datetime) -> datetime:
 
 
 def _domain(url: str) -> str:
-    from urllib.parse import urlsplit
-
     return urlsplit(url).netloc.lower().removeprefix("www.")
 
 

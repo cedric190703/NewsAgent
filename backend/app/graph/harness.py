@@ -13,6 +13,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.core.config import settings
+from app.core.logging import configure_logging
 from app.graph.builder import TOPOLOGY, build_graph
 from app.graph.runner import events_from, new_run_id, stream_run
 from app.graph.state import (
@@ -38,13 +40,14 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--tone", choices=[t.value for t in Tone], default=Tone.NEUTRAL.value)
     parser.add_argument(
-        "--length", choices=[l.value for l in Length], default=Length.STANDARD.value
+        "--length", choices=[length.value for length in Length], default=Length.STANDARD.value
     )
     parser.add_argument("--providers", default="", help="comma list, e.g. mock,tavily")
     parser.add_argument("--no-factcheck", action="store_true")
     parser.add_argument("--json", dest="json_path", default=None)
     parser.add_argument("--print-graph", action="store_true")
     parser.add_argument("--ephemeral", action="store_true", help="no sqlite checkpoint")
+    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     return parser.parse_args()
 
 
@@ -107,6 +110,7 @@ def _render(state: NewsletterState) -> str:
 
 async def _main() -> None:
     args = _parse_args()
+    configure_logging("DEBUG" if args.verbose else "WARNING", settings.json_logs)
     if args.print_graph:
         _print_graph()
         return
@@ -165,5 +169,14 @@ async def _main() -> None:
         print(f"\nWrote {args.json_path}")
 
 
+async def _run() -> None:
+    from app.core.http import close_client
+
+    try:
+        await _main()
+    finally:
+        await close_client()
+
+
 if __name__ == "__main__":
-    asyncio.run(_main())
+    asyncio.run(_run())

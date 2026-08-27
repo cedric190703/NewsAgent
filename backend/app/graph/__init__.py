@@ -12,6 +12,7 @@ from app.graph.state import (
 )
 
 __all__ = [
+    "TOPOLOGY",
     "ArticleSummary",
     "GoodNewsMode",
     "Length",
@@ -19,7 +20,6 @@ __all__ = [
     "NewsletterState",
     "NodeEvent",
     "RunConfig",
-    "TOPOLOGY",
     "Tone",
     "build_graph",
     "run_to_completion",

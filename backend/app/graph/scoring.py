@@ -14,8 +14,22 @@ import math
 import re
 from datetime import datetime, timezone
 
+from app.core.text import terms as _terms
+from app.core.text import topic_terms
 from app.graph.state import ArticleScores, GoodNewsMode, RawArticle
 from app.graph.theme_match import extract_theme_terms, extract_core_terms, theme_match_count
+
+__all__ = [
+    "composite_score",
+    "credibility_score",
+    "explain",
+    "recency_score",
+    "relevance_score",
+    "signal_score",
+    "topic_terms",
+    "topical_terms_matched",
+    "valence_score",
+]
 
 MODE_WEIGHTS: dict[GoodNewsMode, dict[str, float]] = {
     GoodNewsMode.UPLIFTING: {
@@ -107,8 +121,21 @@ CLICKBAIT_TITLE_RE = re.compile(
 )
 
 
-def _terms(text: str) -> set[str]:
-    return {t for t in re.findall(r"[a-z0-9]+", text.lower()) if len(t) > 2}
+def topical_terms_matched(theme: str, article: RawArticle) -> int:
+    """How many of the topic's terms appear in the headline or lede.
+
+    Deliberately ignores the article body: a fetched page carries navigation,
+    related-story links and footers, so almost any long page overlaps almost
+    any theme. What a story is *about* shows up in its title and opening.
+    Returning a count rather than a ratio keeps the selection rule statable —
+    "the headline or lede has to mention the topic at least once".
+    """
+
+    wanted = topic_terms(theme)
+    if not wanted:
+        return 1
+    head = _terms(f"{article.title} {article.snippet[:400]}")
+    return len(wanted & head)
 
 
 def relevance_score(theme: str, subtopic_query: str, article: RawArticle) -> float:

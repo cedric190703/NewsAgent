@@ -7,7 +7,6 @@ import { cn } from "../lib/utils";
 
 interface NewsletterViewProps {
   newsletter: Newsletter;
-  runId: string;
   onBookmark: (article: ArticleSummary) => void;
   bookmarkedIds: Set<string>;
 }
@@ -143,13 +142,11 @@ function ArticleReaderModal({ item, onClose }: { item: ArticleSummary; onClose: 
 
 function ArticleCard({
   item,
-  runId,
   onBookmark,
   bookmarked,
   onExpand,
 }: {
   item: ArticleSummary;
-  runId: string;
   onBookmark: (a: ArticleSummary) => void;
   bookmarked: boolean;
   onExpand: (item: ArticleSummary) => void;
@@ -284,7 +281,7 @@ function SourceList({ sources }: { sources: SourceRef[] }) {
   );
 }
 
-export function NewsletterView({ newsletter, runId, onBookmark, bookmarkedIds }: NewsletterViewProps) {
+export function NewsletterView({ newsletter, onBookmark, bookmarkedIds }: NewsletterViewProps) {
   const [showSources, setShowSources] = useState(false);
   const [expandedItem, setExpandedItem] = useState<ArticleSummary | null>(null);
   const totalArticles = newsletter.sections.reduce((acc, s) => acc + s.items.length, 0);
@@ -357,7 +354,6 @@ export function NewsletterView({ newsletter, runId, onBookmark, bookmarkedIds }:
               <ArticleCard
                 key={item.article_id}
                 item={item}
-                runId={runId}
                 onBookmark={onBookmark}
                 bookmarked={bookmarkedIds.has(item.article_id)}
                 onExpand={setExpandedItem}

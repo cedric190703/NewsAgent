@@ -183,6 +183,11 @@ async def composer_node(
     notes: list[str] = []
     if degraded:
         notes.append("Fewer sources than requested were available for this theme.")
+    if state.get("search_attempts", 1) > 1:
+        notes.append(
+            "The first search pass was too narrow, so queries were broadened. "
+            "Some stories may be related to the theme rather than squarely on it."
+        )
     unverified = sum(1 for s in summaries for f in s.key_facts if not f.verified)
     if unverified:
         notes.append(f"{unverified} unverifiable claim(s) were removed.")

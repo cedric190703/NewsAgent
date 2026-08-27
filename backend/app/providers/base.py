@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -8,7 +8,10 @@ class ChatMessage:
     content: str
 
 
+@runtime_checkable
 class LLMProvider(Protocol):
+    name: str
+
     async def generate(
         self,
         messages: list[ChatMessage],

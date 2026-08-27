@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.text import required_term_count
 from app.graph.state import (
     NewsletterState,
     RawArticle,
@@ -53,12 +54,17 @@ async def research_node(task: ResearchTask) -> dict[str, Any]:
         custom_feeds=config.custom_feeds,
     )
 
+    theme = subtopic.theme or config.theme
     query = SearchQuery(
         query=subtopic.query,
         theme=subtopic.theme or config.theme,
         max_results=settings.results_per_subtopic,
         date_from=config.date_from,
         date_to=config.date_to,
+        required_terms=theme.split(),
+        min_required_terms=required_term_count(
+            theme, settings.min_topic_terms, subtopic.widened
+        ),
     )
 
     try:
